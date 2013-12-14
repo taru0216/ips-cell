@@ -1,0 +1,54 @@
+Source: ips-cell
+Section: web
+Priority: extra
+Maintainer: Masato Taruishi <taru0216@gmail.com>
+Build-Depends: debhelper (>= 8.0.0), protobuf-compiler, python-setuptools, python-protobuf, python-tornado, bc, lsb-release
+Standards-Version: 3.9.3
+
+Package: ips-common
+Architecture: all
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Induced Pluripotent Stem - common files
+ iPS is a small operating system which hosts isolated
+ systems on it. Each environment running the operating system
+ is called 'iPS cell' which can be controlled and managed by
+ its RPC API and managed by iPS Manager by using the API.
+ .
+ This package contains common files used by both iPS cell
+ and Manager.
+
+Package: python-ips
+Section: python
+Architecture: all
+Depends: ${misc:Depends}, ${python:Depends}, python-tornado, python-avahi, python-protobuf, python-gobject, avahi-daemon, ips-common, lsb-release
+Description: Induced Pluripotent Stem - common files
+ iPS is a small operating system which hosts isolated
+ systems on it. Each environment running the operating system
+ is called 'iPS cell' which can be controlled and managed by
+ its RPC API and managed by iPS Manager by using the API.
+ .
+ This package contains python modules.
+
+Package: ips-client
+Architecture: all
+Depends: ${shlibs:Depends}, ${misc:Depends}, ${python:Depends}, python-ips, python-tornado, python-protobuf
+Description: Induced Pluripotent Stem - clients
+ iPS is a small operating system which hosts isolated
+ systems on it. Each environment running the operating system
+ is called 'iPS cell' which can be controlled and managed by
+ its RPC API and managed by iPS Manager by using the API.
+ .
+ This package contains clients to control iPS system.
+
+
+Package: ips-cell
+Architecture: all
+Depends: ${shlibs:Depends}, ${misc:Depends}, ${python:Depends}, python-ips, lxc, ajaxterm, lvm2, apparmor, bzip2, glusterfs-client, cgroup-lite
+Description: Induced Pluripotent Stem - Cell
+ This package contains necessary files for iPS cells.
+
+Package: ips-manager
+Architecture: all
+Depends: ${shlibs:Depends}, ${misc:Depends}, ${python:Depends}, radvd, python-ips 
+Description: Induced Pluripotent Stem - Manager
+ This package contains necessary files for iPS Manager.

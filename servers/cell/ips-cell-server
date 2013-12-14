@@ -1,0 +1,352 @@
+#!/usr/bin/python
+#
+# Copyright (c) 2013, Masato Taruishi <taru0216@gmail.com>
+#
+
+"""ips-cell-server: iPS cell server."""
+
+__authour__   = "Masato Taruishi"
+__copyright__ = "Copyright (c) 2013, Masato Taruishi <taru0216@gmail.com>"
+
+
+from tornado.options import define, options
+
+import getopt
+import ips.flags
+import ips.handlers
+import ips.proto.sandbox_pb2
+import ips.proto.manager_pb2
+import ips.sandbox_service
+import ips.server
+import ips.utils
+import ips.variable_factory
+import ips.zeroconf
+import logging
+import os
+import os.path
+import socket
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import tornado.web
+import urllib
+
+
+START_TIMESTAMP = time.time()
+
+
+# command line options
+define('port', default=6195, help='port to listen', metavar='PORT')
+define('name',
+    default=socket.gethostname(), help='name of this node',
+    metavar='NAME')
+define('manager',
+    default=None, help='<host>:<port> for iPS Manager',
+    metavar='HOST:PORT')
+
+
+# flags
+_Manager = ips.flags.Flag('manager')
+
+
+class Error(Exception):
+  """General Error for this package."""
+  pass
+
+
+def _ParseOptions():
+  args = ips.server.ParseOptions()
+  if options.manager:
+    _Manager.Set(options.manager)
+  return args
+
+
+def _GetIfconfigStatus():
+  return ips.utils.CallExternalCommand('ifconfig')
+
+
+def _GetIptablesStatus(table='filter'):
+  try:
+    return ips.utils.CallExternalCommand('iptables -t "%s" -n -L -v' % table)
+  except ips.utils.CommandExitedWithError:
+    return None
+
+
+def _GetLsbRelease():
+  return ips.utils.CallExternalCommand('lsb_release -a')
+
+
+def _GetFree():
+  return ips.utils.CallExternalCommand('free')
+
+
+def _GetDF():
+  return ips.utils.CallExternalCommand('df')
+
+
+def _GetPVS():
+  try:
+    return ips.utils.CallExternalCommand('pvs -v 2> /dev/null')
+  except ips.utils.CommandExitedWithError, e:
+    return e.out
+
+
+def _GetVGS():
+  try:
+    return ips.utils.CallExternalCommand('vgs -v 2> /dev/null')
+  except ips.utils.CommandExitedWithError, e:
+    return e.out
+
+
+def _GetLVS():
+  try:
+    return ips.utils.CallExternalCommand('lvs -v 2> /dev/null')
+  except ips.utils.CommandExitedWithError, e:
+    return e.out
+
+
+def _GetServiceStatus():
+  return ips.utils.CallExternalCommand(
+      'initctl list | grep start | grep process | sort')
+
+
+class StatuszHandler(tornado.web.RequestHandler):
+
+  def initialize(self, usage, manager, sandbox_service):
+    self.usage = usage
+    self.manager = manager
+    self.sandbox_service = sandbox_service
+
+  def get(self):
+    self.write('<body style="background: #eeeeee;">')
+    self.write('<h2>Status of iPS cell %s</h2>' % options.name)
+    if self.usage:
+      self.write(
+          '<a href=/helpz>Help</a> | ')
+    self.write(
+        '<a href=/devz/console/login/ target=_blank>Login</a> | ')
+    if options.log_file_prefix:
+      self.write(
+          '<a href="/devz/file?path=%s&format=raw">'
+          '%s'
+          '<a/>' % (options.log_file_prefix, options.log_file_prefix))
+    self.write('<pre>Build at %s\n' % time.ctime(ips.server.ReadTimestamp()))
+    self.write(
+        'Start at %s (%d seconds ago)</pre>' % (time.ctime(START_TIMESTAMP),
+                                                time.time() - START_TIMESTAMP))
+    self.write('<pre>%s</pre>' % self.manager.GetNetworkAddress())
+    self.write('<pre>%s</pre>' % _GetLsbRelease())
+    self.write('<h3>Memory</h3>')
+    self.write('<pre>%s</pre>' % _GetFree())
+    self.write('<h3>Disk</h3>')
+    self.write('<pre>%s</pre>' % _GetDF())
+    self.write('<h4>LVM</h4>')
+    self.write('<h5>Physical Volume</h5>')
+    self.write('<pre>%s</pre>' % _GetPVS())
+    self.write('<h5>Volume Group</h5>')
+    self.write('<pre>%s</pre>' % _GetVGS())
+    self.write('<h5>Logical Volume</h5>')
+    self.write('<pre>%s</pre>' % _GetLVS())
+
+    self.write('<h3>iptables</h3>')
+    self.write('<h4>filter</h4>')
+    self.write('<pre>%s</pre>' % _GetIptablesStatus())
+    self.write('<h4>nat</h4>')
+    self.write('<pre>%s</pre>' % _GetIptablesStatus(table='nat'))
+
+    self.write('<h3>Services</h3>')
+    self.write('<pre>%s</pre>' % _GetServiceStatus())
+
+    self.write('<h3>Sandbox</h3>')
+    for sandbox_id in self.sandbox_service.GetSandboxes():
+      request = ips.proto.sandbox_pb2.GetStateRequest()
+      request.sandbox_id = sandbox_id
+      state = self.sandbox_service.GetSandbox(sandbox_id).GetState()
+      self.write('<li><a href="#%s">%s</a> (%s)</li>' % (sandbox_id,
+                                                         sandbox_id,
+                                                         str(state)))
+
+    self.write('<h4>Alternatives</h4>')
+    request = ips.proto.sandbox_pb2.GetGenericNamesRequest()
+    for generic_name in self.sandbox_service.getGenericNames(
+        None, request).generic_names:
+      out = ips.utils.CallExternalCommand(
+          'update-alternatives --display ips-sandbox_%s.%s' % (
+              generic_name.role, generic_name.owner.replace('.', '-')))
+      self.write('<pre>%s</pre>' % out)
+
+    self.write('<h4>Info</h4>')
+    for sandbox_id in self.sandbox_service.GetAvailableSandboxes():
+
+      sandbox = self.sandbox_service.GetSandbox(sandbox_id)
+
+      request = ips.proto.sandbox_pb2.GetStateRequest()
+      request.sandbox_id = sandbox_id
+      state = sandbox.GetState()
+
+      self.write('<h5>')
+      self.write('<a name="%s">' % sandbox_id)
+      statusz_port = sandbox.GetStatuszPort()
+      if statusz_port:
+        self.write(
+            '<a href="http://%s/statusz">' 
+                % ips.utils.GetHostPortForUrl(
+                    self.manager.GetNetworkAddress(),
+                    statusz_port))
+      self.write('%s (%s)' % (sandbox_id, str(state)))
+      if statusz_port:
+        self.write('</a>')
+      self.write(
+          ' | <a href="/devz/console/sandbox/%s/" target="_blank">'
+          'Console</a>' % sandbox_id)
+      if sandbox.GetState().state == ips.proto.sandbox_pb2.READY:
+        self.write(
+            ' | <a href="/devz/console/ssh/%s/ubuntu/" target="_blank">'
+            'Login</a>' % sandbox_id)
+      self.write('</h5>')
+
+      self.write('<div>%s</div>' % sandbox.GetHelp())
+      self.write(
+          '<div align=right>'
+          '<a href="/devz/file?path=/var/lib/lxc/%s/help">Edit this help</a>'
+          '</div>' % sandbox_id)
+
+      send_event_path='/formz/ips_proto_sandbox.SandboxService/sendEvent'
+      for event_id in sandbox.GetValidEvents():
+        event = ips.sandbox.GetEventName(event_id)
+        self.write(
+            '<form action=%s method=post style="display: inline">'
+            "  <input type=hidden name=text_proto"
+            "      value='sandbox_id: \"%s\" event: %s'>"
+            '  <input type=submit value=%s>'
+            '</form>' % (send_event_path, sandbox_id, event, event))
+      self.write('<h5>Ports</h5>')
+      enabled = dict.fromkeys(sandbox.GetEnabledPorts())
+      for port in sandbox.GetPorts():
+        if port in enabled:
+          self.write('<em style="color: green;">')
+        self.write(str(port))
+        if port in enabled:
+          self.write('</em>')
+        self.write(' ')
+      self.write('<h5>Detail</h5>')
+      self.write('<pre>%s</pre>' % sandbox.GetInfo())
+    self.write('<h3>ifconfig</h3>')
+    self.write('<pre>%s</pre>' % _GetIfconfigStatus())
+    self.write('<h3>iPS Manager</h3>')
+    self.write('Manager: %s' % _Manager.Get())
+
+    self.write('</body>')
+
+class Manager:
+
+  def __init__(self, sandbox_service):
+    self.thread = threading.Thread(target=self._Process)
+    self.thread.daemon = True
+
+    self.sandbox_service = sandbox_service
+
+    self.zero = None
+    if not _Manager.Get():
+      self.zero = ips.zeroconf.IPSManagerMonitor(
+          domain=options.domain,
+          callback=self._OnManagerUpdated)
+
+  def Monitor(self):
+    if self.zero:
+      self.zero.Monitor()
+    self.thread.start()
+
+  def _Process(self):
+    while True:
+      if _Manager.Get():
+        logging.info('Updating registration info')
+        self._RegisterToManager()
+      time.sleep(300)
+
+  def _OnManagerUpdated(self, name, address, port):
+    logging.info('Use manager %s:%s', address, port)
+    if address.find(':') != -1:
+      logging.info('Detected IPv6 address %s', address)
+      if address.find('fe80:') == 0:
+        logging.info('Ignoring link-local address %s', address)
+        return
+      address = '[%s]' % address
+    _Manager.Set('%s:%s' % (address, port))
+    self._RegisterToManager()
+
+  def GetNetworkAddress(self):
+    if _Manager.Get():
+      logging.debug('Getting my network address from manager: %s',
+                    _Manager.Get())
+      t = urllib.urlopen('http://%s/tellmez' % _Manager.Get()).read()
+      address = t.split(' ')[1].strip()
+      logging.debug('Got my network address: %s', address)
+      return address
+    return ips.utils.GetNetworkAddresses()[0]
+
+  def _RegisterToManager(self):
+    name = options.name
+    my_url = ('http://%s'
+        % ips.utils.GetHostPortForUrl(self.GetNetworkAddress(),
+                                      options.port))
+    logging.info('Registering cell (%s, %s)', name, my_url)
+    proto = ips.proto.manager_pb2.RegisterCellRequest()
+    proto.name = name
+    proto.url = my_url
+
+    for sandbox_id in self.sandbox_service.GetAvailableSandboxes():
+      sandbox_proto = proto.sandboxes.add()
+      p = self.sandbox_service.GetSandbox(sandbox_id).GetSandboxProto()
+      sandbox_proto.CopyFrom(p)
+    try:
+      manager_service = ips.proto.manager_pb2.ManagerService
+      register = manager_service.GetDescriptor().FindMethodByName(
+          'registerCell')
+      rpc_client = ips.handlers.FormzRpcClient(_Manager.Get())
+      response = rpc_client.Call(register, proto)
+      logging.info('Registration: %s', str(response).strip())
+    except IOError, e:
+      logging.info(e)
+
+
+def main():
+  args = _ParseOptions()
+
+  sandbox_service = ips.sandbox_service.LxcSandboxService()
+  manager = Manager(sandbox_service)
+  services = [sandbox_service]
+
+  USAGE = """
+<li><a href="/devz/file?path=/etc/lsb-release">/devz/file</a> : Edit files.
+<li><a href="/devz/sh?cmd=echo%20Hello%20world">/devz/sh</a> :
+    Run shell commands.
+<li><a href="/devz/mon">/devz/mon</a> :
+    Simple system monitoring page to see top, vmstat and syslog
+<li><a href="/devz/console/login/">/devz/console/login/</a> :
+    Open console
+<li><a href="/statusz">/statusz</a> : See status.
+<li><a href="/varz">/varz</a> : See variables.
+  """
+  for service in services:
+    path = '/formz/%s/' % service.GetDescriptor().full_name
+    USAGE += '<li><a href="%s">%s</a>' % (path, path)
+
+  handlers = ips.server.InitWebHandlers('ips-cell')
+  handlers.append((r"/statusz", StatuszHandler,
+      dict(usage=USAGE,
+           manager=manager,
+           sandbox_service=sandbox_service)))
+  handlers.append((r"/helpz", ips.handlers.HelpzHandler, dict(usage=USAGE)))
+  handlers.append((r"/formz/(.*)/(.*)", ips.handlers.FormzHandler,
+      dict(service_protos=services)))
+
+  manager.Monitor()
+  ips.server.ServerLoop(options.port, handlers)
+
+
+if __name__ == "__main__":
+  main()
+

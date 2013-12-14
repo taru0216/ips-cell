@@ -1,0 +1,96 @@
+// Copyright (c) 2013, Masato Taruishi <taru0216@gmail.com>
+//
+// Definition of iPS Manager protocol buffers
+//
+syntax = "proto2";
+
+
+package ips_proto_manager;
+
+
+import "ips/proto/sandbox.proto";
+
+
+option py_generic_services = true;
+
+
+// Request of RegisterCell method.
+message RegisterCellRequest {
+
+  // name of the cell
+  required string name = 1;
+
+  // The base URL of the cell. The manager will use this base
+  // URL to control cells. For example, if the url is http://cell:6195
+  // then, the manager checks its health by using
+  // http://cell:6195/healthz&=service=ips-cell
+  required string url = 2;
+
+  // List of sandboxes which the cell hosts. All the sandboxes specified
+  // here are treated as they share the same end IP address.
+  repeated ips_proto_sandbox.Sandbox sandboxes = 3;
+}
+
+
+// Response of RegisterCell method.
+message RegisterCellResponse {
+
+  // The status of the request.
+  enum Status {
+    SUCCESS = 0;
+    FAILED = 1;
+  }
+  required Status status = 1;
+}
+
+
+message GetCellsRequest {
+}
+
+
+message Cell {
+
+  // the name of the cell
+  required string node = 1;
+
+  // the base URL of the cell
+  required string url = 2;
+}
+
+
+message GetCellsResponse {
+
+  // cell information
+  repeated Cell cells = 1;
+}
+
+
+// Request of searchSandboxRequest method.
+message SearchSandboxRequest {
+  required string query = 1;
+}
+
+
+// Response of searchSandboxRequest method.
+message SearchSandboxResponse {
+  repeated group Sandboxes = 1 {
+    // the cell on which the sandbox exists
+    required Cell cell = 1;
+
+    // sandbox
+    required ips_proto_sandbox.Sandbox sandbox = 2;
+  }
+}
+
+
+service ManagerService {
+
+  // Registers a new cell to the manager.
+  rpc registerCell(RegisterCellRequest) returns (RegisterCellResponse);
+
+  // Gets a list of iPS cells.
+  rpc getCells(GetCellsRequest) returns (GetCellsResponse);
+
+  // Searches sandboxes.
+  rpc searchSandbox(SearchSandboxRequest) returns (SearchSandboxRequest);
+}

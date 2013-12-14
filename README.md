@@ -34,10 +34,10 @@ with top, vmstat, iostat by using only the browser.
 
 <pre>
  +------------------------------------------------+   +== Applications
- |High level RPCs / Integrated Form for RPCs      | <=+ 
+ |High level RPCs / Integrated Form for RPCs      | &lt;=+ 
  +------------------------------------------------+        +-------+
- |Integrated Management tools to monitor, login   | <===== |Browser|
+ |Integrated Management tools to monitor, login   | &lt;===== |Browser|
  +------------------------------------------------+        |       |
- |Integrated Terminal Emulator                    | <===== +-------+
+ |Integrated Terminal Emulator                    | &lt;===== +-------+
  +------------------------------------------------+
 </pre>

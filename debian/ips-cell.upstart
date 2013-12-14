@@ -1,0 +1,21 @@
+author "Masato Taruishi <taru0216@gmail.com>"
+description "iPS Cell Daemon"
+
+start on runlevel [2345]
+stop on runlevel [016]
+
+respawn
+
+pre-start script
+  test -x /usr/bin/ips-cell-server || { stop; exit 0; }
+end script
+
+script
+  test -f /etc/default/ips-cell && . /etc/default/ips-cell
+  exec /usr/bin/ips-cell-server \
+      --log_file_prefix=/var/log/ips-cell.log \
+      --varz_disk=true \
+      --varz_memory=true \
+      --varz_packages=true \
+      $DAEMON_OPTS
+end script

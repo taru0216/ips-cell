@@ -1,0 +1,3 @@
+usr/bin/ips-cell-server
+usr/share/lxc/templates/lxc-ips-archive
+srv/ips/users/

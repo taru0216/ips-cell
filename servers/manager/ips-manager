@@ -1,0 +1,558 @@
+#!/usr/bin/python
+#
+# Copyright (c) 2013, Masato Taruishi <taru0216@gmail.com>
+#
+
+"""ips-manager: iPS Manager.
+
+iPS Manager manages iPS cells. Now it watches
+cells health periodically.
+
+While you run this manager, you can see the manager status at:
+
+  http://localhost:6196/statusz
+"""
+
+
+__authour__   = "Masato Taruishi"
+__copyright__ = "Copyright 2013, Masato Taruishi <taru0216@gmail.com>"
+
+
+from tornado.options import define, options
+
+import ips.handlers
+import ips.flags
+import ips.proto.manager_pb2
+import ips.server
+import ips.variable_factory
+import ips.zeroconf
+
+import getopt
+import logging
+import Queue
+import re
+import socket
+import sys
+import threading
+import time
+import tornado.ioloop
+import tornado.web
+import urllib
+
+
+class Error(Exception):
+  """General Error for this package."""
+  pass
+
+
+class IllegalArgumentError(Error):
+  """Thrown when an illegal argument is specified."""
+  pass
+
+
+define('health_check_interval', default=60,
+    help='time in seconds how often the manager cheskcs availabilities of cells.',
+    metavar='SECONDS')
+define('name',
+    default=socket.gethostname(), help='name of this node',
+    metavar='NAME')
+define('port', default=6196, help='port to listen', metavar='PORT')
+
+
+def _GetDateTime(timestamp=None):
+  return '%s %s' % (time.ctime(timestamp), time.tzname[1])
+  
+
+class Health:
+  """Health Information for a node.
+
+  Health represents a node health information. A node should have
+  a http endpoint to output just 'ok' when its health is ok or 'NG'
+  when its health is not ok. Typically, the endpoint looks like:
+
+    http://node/healthz?service=<service>
+
+  where <service> specifiees its service name. This is used to
+  distungnish the node's health endpoint is acutllay the service
+  that you expect. For example, without <service>, you may get
+  'ok' output for another service who has the same endpoint.
+
+  The node returns 'NG' when its service is not ready to serve their
+  service or <service> is not a expected service which the node serves.
+
+  Health may be 'None' when no health check is proccessed or
+  the node doesn't respond.
+  """
+
+  def __init__(self, node, url, sandboxes):
+    self.node = node
+    self.url = url
+    self.sandboxes = sandboxes
+
+    self.last_modified = None
+    self.last_checked = None
+
+    # healthz_history is a list of (timestamp, response) 
+    self.healthz_history = []
+    self.max_history_size = 60
+
+  def Update(self):
+    url = '%s/healthz?service=ips-cell' % self.url
+    logging.debug('updating %s using %s', self.node, url)
+    f = urllib.urlopen(url)
+    try:
+      self._HealthCheckCallback(f.read())
+    except IndexError, e:
+      logging.warning(e)
+    finally:
+      f.close()
+
+  def _HealthCheckCallback(self, response):
+    logging.debug('got healthcheck request from %s', self.node)
+    self.last_checked = time.time()
+    if len(self.healthz_history) > 0 and (
+        self.healthz_history[-1][1] != response):
+      self.last_modified = self.last_checked
+    self.healthz_history.append((self.last_checked, response))
+    if len(self.healthz_history) > self.max_history_size:
+      self.healthz_history.pop(0)
+
+  def __str__(self):
+    buf = ''
+    if len(self.healthz_history) > 0:
+      last_healthz = self.healthz_history[-1]
+      buf = last_healthz[1]
+      buf += ' at ' + _GetDateTime(last_healthz[0])
+      buf += ' (%d sec ago)' % int(time.time() - last_healthz[0])
+    if self.last_modified:
+      buf += ' since ' + _GetDateTime(self.last_modified)
+      buf += ' (%d sec ago)' % int(time.time() - self.last_modified)
+    return buf
+
+  def summary_to_html_row(self):
+    buf = '<td rowspan=2><a href="%s/statusz">%s</a></td>' % (self.url,
+                                                              self.node)
+
+    buf += '<td>'
+    if len(self.healthz_history) > 0:
+      buf += str(self.healthz_history[-1][1])
+    buf += '</td>'
+
+    buf += '<td>'    
+    if len(self.healthz_history) > 0:
+      last_checked = self.healthz_history[-1][0]
+      buf += _GetDateTime(last_checked)
+      buf += '<br>(%d sec ago)' % int(time.time() - last_checked)
+    buf += '</td>'
+
+    buf += '<td>'
+    if len(self.healthz_history) > 0:
+      avails = 0
+      for probe in self.healthz_history:
+        if probe[1] == 'ok':
+          avails += 1
+      availability = avails / float(len(self.healthz_history))
+      buf += '%.1f%%' % (availability * 100)
+    buf += '</td>'
+
+    return buf
+
+  def history_to_html(self):
+    buf = '<table class="healthbar" width=100%%>'
+    buf += '<tr><td colspan=%d><b>History</b></td></tr>' % self.max_history_size
+    buf += '<tr>'
+    for i in range(self.max_history_size):
+      health_class = ''
+      title = ''
+      oldest_probe = self.max_history_size - len(self.healthz_history)
+      if i >= oldest_probe:
+        probe = self.healthz_history[i - oldest_probe]
+        health_class= 'health_%s' % probe[1]
+        title = '%s: %s' % (_GetDateTime(probe[0]), probe[1])
+      buf += '<td class="%s">' % health_class
+      buf += '<pre title="%s"> </pre>' % title
+      buf += '</td>'
+    buf += '</tr>'
+    if len(self.healthz_history) > 0:
+      localtime = time.localtime(self.healthz_history[0][0])
+      buf += '<tr>'
+      buf += '<td colspan=%d>%s</td>' % (self.max_history_size - 10,
+                                         time.strftime('%H:%M:%S',
+                                                       localtime))
+    buf += '<td colspan=10 align=right>Now</td>'
+    buf += '</tr>'
+    buf += '</table>'
+    return buf
+
+
+class HealthChecker:
+  """Helath Checker for iPS cells.
+
+  HealthChecker chesks the specified candidates cells health periodically.
+  You can call Run() to start the check and Term() to terminate it.
+  """
+
+  def __init__(self, interval=60):
+    """Initializes with the speicified candidates with the specified interval.
+    """
+    self.healths = {}
+    
+    self.interval = interval
+
+    self.state = None
+
+    self._InitThread()
+    self._InitQueue()
+
+    self._last_logged_underrun = None
+
+  def _InitThread(self):
+    self.schedular_thread = threading.Thread(target=self._RunSchedule)
+
+  def _InitQueue(self):
+    self.queue = {}
+    self.queue['Schedule'] = Queue.Queue()
+
+
+  def AddNewCandidate(self, candidate, url, sandboxes):
+    if candidate in self.healths and self.healths[candidate].url == url:
+      self.healths[candidate].url = url
+      self.healths[candidate].sandboxes = sandboxes
+      logging.debug('update registration info: %s', candidate)
+    else:
+      self.healths[candidate] = Health(candidate,
+                                       url, sandboxes)
+      self.healths[candidate].Update()
+      self._PutCandidateOnSchedule(self.healths[candidate])
+    logging.debug('New Candidate: %s', self.healths[candidate])
+
+  def _PutCandidateOnSchedule(self, health):
+    waketime = time.time() + self.interval
+    logging.debug('putting %s on schedule. wake at %s, current %s',
+                  health.node, waketime, time.time())
+    self.queue['Schedule'].put({'waketime': waketime,
+                                'health': health})
+
+  def _LogUnderRun(self, sleeptime, candidate):
+    if self._last_logged_underrun:
+      if time.time() - self._last_logged_underrun < 1:
+        return
+    logging.warning('interval underrun %s sec for %s.',
+                    sleeptime, candidate)
+    self._last_logged_underrun = time.time()
+
+  def _WaitUntilNextCandidateOnSchedule(self):
+    candidate_info = self.queue['Schedule'].get(timeout=1)
+    waketime = candidate_info['waketime']
+    health = candidate_info['health']
+    if self.healths[health.node] != health:
+      logging.info('Detected deprecated health information: %s' % health.node)
+      return None
+    logging.debug('candidate: %s', str(candidate_info))
+    sleeptime = waketime - time.time()
+    if sleeptime < -1:
+      self._LogUnderRun(sleeptime, health.node)
+    while sleeptime > 0:
+      logging.debug('waiting %s sec for %s.', sleeptime, health.node)
+      if sleeptime > 1:
+        sleeptime = 1
+      time.sleep(sleeptime)
+      if self.state == 'Term':
+        return None
+      sleeptime = waketime - time.time()
+    return health
+
+  def _SetState(self, state):
+    logging.debug('setting state (%s -> %s)', self.state, state)
+    if state == 'Run':
+      if self.state == None:
+        logging.info('starting health checker')
+        self.schedular_thread.start()
+      else:
+        raise IllegalArgumentError('Run can be valid only after None: ' %
+                                   self.state)
+    elif state == 'Term':
+      if self.state == 'Run':
+        self.state = state
+        logging.info('terminating health checker')
+        self.schedular_thread.join()
+      else:
+        raise IllegalArgumentError('Term can be valid only after Run: ' %
+                                   self.state)
+    else:
+      raise IllegalArgumentError(state)
+    self.state = state
+ 
+  def Run(self):
+    """Runs the health check."""
+    self._SetState('Run')
+
+  def Term(self):
+    """Terminates the health check."""
+    self._SetState('Term')
+
+  def _RunSchedule(self):
+    while self.state != 'Term':
+      try:
+        health = self._WaitUntilNextCandidateOnSchedule()
+        if health is not None:
+          self._PutCandidateOnSchedule(health)
+          health.Update()
+      except Queue.Empty:
+        logging.warning('no schedulable candidate found.')
+
+
+class SearchSandboxHandler(tornado.web.RequestHandler):
+  """Handles search sandbox request."""
+
+  def initialize(self, manager_service):
+    self.manager_service =manager_service
+
+  def get(self):
+    query = self.get_argument('q', '')
+    if query:
+      request = ips.proto.manager_pb2.SearchSandboxRequest()
+      request.query = query
+      response = self.manager_service.searchSandbox(None, request)
+      self.write(self._GenSearchResult(query, response))
+    else:
+      self.write('<form><input type=text name=q></form>') 
+
+  def _GenSearchResult(self, query, response):
+    html = '<form><input type=text name=q value="%s"></form>' % query
+    html += '<pre>%d sandboxes found</pre>' % len(response.sandboxes)
+    html += '<table border=1>'
+    html += (
+        '<tr>'
+        '<th>Role</th><th>Version</th><th>Owner</th>'
+        '<th>Provisioning</th><th>Comment</th><th>Cell</th>'
+        '</tr>')
+    for sandbox_info in response.sandboxes:
+      cell = sandbox_info.cell
+      sandbox = sandbox_info.sandbox
+      html += (
+          '<tr><td>'
+          '<a href="%s/devz/console/sandbox/%s/" target="_blank">%s</a>'
+          '</td><td>%s</td>'
+          '<td>%s</td><td>%s</td>'
+          '<td>%s</td><td>%s</td></tr>' % (
+              cell.url, sandbox.sandbox_id,
+              sandbox.role, sandbox.version,
+              sandbox.owner, time.ctime(sandbox.provisioning_time),
+              sandbox.comment, cell.node))
+    html += '</table>'
+    return html
+
+
+class StatuszHandler(tornado.web.RequestHandler):
+  """Handles /statusz HTTP request.
+
+  /statusz is a simple interface to show the server status.
+  """
+
+  def initialize(self, health_checker=None):
+    """Initializes with the specified health_checker."""
+    self.health_checker = health_checker
+
+  def get(self):
+    """Handles GET requests."""
+    self.set_header('Content-Type', 'text/html')
+
+    self.write('<html>')
+    self.write('<head>')
+    self.write('<meta http-equiv="refresh" content="60">')
+    self.write('<style type="text/css">')
+    self.write("""
+.health_ok { background: #00ff00; }
+.health_None, .health_NG { background: #ff0000; }
+""")
+    self.write('</style>')
+    self.write('</head>')
+
+
+    self.write('<body style="background: #eeeeee;">')
+    ok = {}
+    ng = {}
+    unknown = {}
+    for candidate, health in self.health_checker.healths.iteritems():
+      history = health.healthz_history
+      if len(history) > 0 and history[-1][1] == 'ok':
+        ok[candidate] = health
+      elif len(history) > 0 and history[-1][1] == 'NG':
+        ng[candidate] = health
+      else:
+        unknown[candidate] = health
+
+    self.write("<h2>iPS Cell Manager</h2>")
+    self.write("<h3>Summary</h3>")
+    self.write("<pre>Total: %d, OK: %d, Unknown: %d, NG: %d</pre>" %
+               (len(self.health_checker.healths),
+                len(ok),
+                len(unknown),
+                len(ng)))
+
+    self._WriteHealth('OK', ok, True)
+    self._WriteHealth('Unknown', unknown)
+    self._WriteHealth('NG', ng, True)
+    self.write('</body>')
+    self.write('</html>')
+
+  def _WriteHealth(self, health_type, healths, add_console_link=False):
+    self.write("<h3>%s</h3>" % health_type)
+    self.write(
+        '<table border="1"><tr>'
+        '<th>Cell</th><th>State</th><th>Last Check</th>'
+        '<th>Availability</th><th>Misc</th>'
+        '</tr>')
+    for candidate, health in healths.iteritems():
+      self.write('<tr>')
+      self.write(health.summary_to_html_row())
+      if add_console_link:
+        self.write(
+            '<td>'
+            '<a href="%s/devz/console/login/" target="_blank">'
+            'Console</a>' % health.url)
+        self.write(
+            '| <a href="%s/quitquitquit">Quit</a>' % health.url)
+        self.write('</td>')
+      self.write('</tr>')
+      self.write('<tr><td colspan=4 align=right>')
+      self.write(health.history_to_html())
+      self.write('</td></tr>')
+    self.write('</table>')
+
+
+class ManagerServiceImpl(ips.proto.manager_pb2.ManagerService):
+
+  def __init__(self, health_checker):
+    self.health_checker = health_checker
+
+  def registerCell(self, controller, request, done=None):
+    self.health_checker.AddNewCandidate(request.name,
+                                        request.url, request.sandboxes)
+    logging.info('Registered %s as %s', request.name, request.url)
+    response = ips.proto.manager_pb2.RegisterCellResponse()
+    response.status = ips.proto.manager_pb2.RegisterCellResponse.SUCCESS
+    if done:
+      done.run(response)
+    else:
+      return response
+
+  # TODO(taruishi) Creates Cell class to hold such infomrations 
+  def _MergeCellMessageFromHealth(self, cell, health):
+    cell.node = health.node
+    cell.url = health.url
+
+  def getCells(self, controller, request, done=None):
+    response = ips.proto.manager_pb2.GetCellsResponse()
+    for health in self.health_checker.healths.itervalues():
+      cell = response.cells.add()
+      self._MergeCellMessageFromHealth(cell, health)
+    if done:
+      done.run(response)
+    else:
+      return response
+
+  def _Search(self, sandbox_proto, query):
+    for each_query in query.split():
+      if not self._SearchAnd(sandbox_proto, each_query):
+        return False
+    return True
+
+  def _SearchAnd(self, sandbox_proto, query):
+    for field in ['comment', 'owner', 'provisioning_time', 'role', 'version']:
+      if str(getattr(sandbox_proto, field)).find(query) != -1:
+        return True
+    return False
+
+  def searchSandbox(self, controller, request, done=None):
+    response = ips.proto.manager_pb2.SearchSandboxResponse()
+    for health in self.health_checker.healths.itervalues():
+      cell = ips.proto.manager_pb2.Cell()
+      self._MergeCellMessageFromHealth(cell, health)
+      for sandbox_proto in health.sandboxes:
+        logging.debug(
+            'checking %s if matching query: %s', sandbox_proto, request.query)
+        if self._Search(sandbox_proto, request.query):
+          sandbox_info = response.sandboxes.add()
+          sandbox_info.cell.CopyFrom(cell)
+          sandbox_info.sandbox.CopyFrom(sandbox_proto)
+    if done:
+      done.run(response)
+    else:
+      return response
+
+
+class RegisterCellHandler(tornado.web.RequestHandler):
+
+  def initialize(self, health_checker, manager_service):
+    self.health_checker = health_checker
+    self.manager_service = manager_service
+
+  def run(self, response):
+    """callback of rpc calls."""
+    self.write(response.status)
+
+  def post(self):
+    request = ips.proto.manager_pb2.RegisterCellRequest()
+    request.name = self.get_argument('name')
+    request.url = self.get_argument('url')
+    self.manager_service.registerCell(None, request, self)
+
+
+class TellmezHandler(tornado.web.RequestHandler):
+  def get(self):
+    self.set_header('Content-Type', 'text/plain')
+    self.write('remote_ip: %s\n' % self.request.remote_ip)
+
+
+def _ParseOptions():
+  args = ips.server.ParseOptions()
+  return args
+
+
+def _ReadTimestamp():
+  buildinfo = os.path.sep.join([sys.prefix, 'share', 'ips-common', 'buildinfo'])
+  if os.path.exists('buildinfo'):
+    buildinfo = 'buildinfo'
+  f = open(buildinfo)
+  for line in f.readlines():
+    if line.split(':')[0] == 'build-timestamp':
+      return int(line.split(':')[1].strip())
+
+
+def _InitZeroconf():
+  zero = ips.zeroconf.IPSManagerService(port=options.port,
+                                        domain=options.domain)
+  return zero
+
+
+def main():
+  args = _ParseOptions()
+
+  handlers = ips.server.InitWebHandlers('ips-manager')
+  health_checker = HealthChecker(options.health_check_interval)
+  manager_service = ManagerServiceImpl(health_checker)
+
+  handlers.append((r"/",
+                   SearchSandboxHandler,
+                   dict(manager_service=manager_service)))
+  handlers.append((r"/statusz",
+                   StatuszHandler,
+                   dict(health_checker=health_checker)))
+  handlers.append((r'/formz/(.*)/(.*)',
+                   ips.handlers.FormzHandler,
+                   dict(service_protos=[manager_service])))
+  handlers.append((r"/tellmez", TellmezHandler))
+
+  zero = _InitZeroconf()
+  health_checker.Run()
+  try:
+    zero.Publish()
+    ips.server.ServerLoop(options.port, handlers)
+  finally:
+    health_checker.Term()
+
+
+if __name__ == "__main__":
+  main()

@@ -1,0 +1,477 @@
+#!/usr/bin/env python
+
+__author__ = 'Masato Taruishi'
+__copyright__ = 'Copyright (c) 2013, Masato Taruishi <taru0216@gmail.com>'
+
+
+from tornado.options import define, options
+
+import google.protobuf.service
+import google.protobuf.text_format
+import ips.tools
+import ips.server
+import ips.handlers
+import ips.proto.manager_pb2
+import ips.proto.sandbox_pb2
+import logging
+import os
+import urllib
+import re
+import socket
+import sys
+import threading
+import time
+import tornado.web
+
+
+define(
+    'cell_pattern',
+    default='', help='Regular expression to match nodes.',
+    metavar='REGEXP')
+
+define(
+    'manager',
+    default='localhost:6196',
+    help='iPS Manager',
+    metavar='HOST:PORT')
+
+define(
+    'cell',
+    default=None,
+    help='Use the specified cell server directly',
+    metavar='HOST:PORT')
+
+define(
+    'owner',
+    help='Owner of this sandbox.',
+    metavar='OWNER',
+    default=os.environ['USER'])
+
+define(
+    'role',
+    help='Role of this sandbox.',
+    metavar='ROLE',
+    default='sandbox')
+
+define(
+    'system',
+    help='System of this sandbox.',
+    metavar='SYSTEM',
+    default='ubuntu')
+
+define(
+    'system_options',
+    help='System options of this sandbox.',
+    metavar='OPTIONS',
+    default='-r precise')
+
+define(
+    'version',
+    help='Version of this sandbox.',
+    metavar='VERSION',
+    default=None)
+
+define(
+    'num_updates',
+    help='Number of cells you want to update at the same time.',
+    metavar='NUMBER',
+    default=1)
+
+define(
+    'refresh_rate',
+    help='Refresh rate of the update manager status web console.',
+    metavar='SECONDS',
+    default=3)
+
+define(
+    'new_release',
+    help='Creates a new sandbox release before launching.',
+    metavar='True|False',
+    default='False')
+
+define(
+    'not_start',
+    help='Do not start the new sandbox.',
+    metavar='True|False',
+    default='False')
+
+Hostname = socket.gethostname()
+
+
+class Error(Exception):
+  pass
+
+
+class UpdateTask(threading.Thread):
+
+  class UpdateException(Error):
+    pass
+
+  def __init__(self, cell, update_manager):
+    super(UpdateTask, self).__init__()
+    self.cell = cell
+    self.update_manager = update_manager
+    self.rpc_client = ips.handlers.FormzRpcClient(
+        urllib.splithost(urllib.splittype(cell.url)[1])[0])
+    self._InitSandboxId()
+    self.state = 'waiting'
+
+  def _NormalizeId(self, buf):
+    return buf.replace('.', '-')
+
+  def _InitSandboxId(self):
+    self.sandbox_id = None
+    self.new_sandbox = False
+    if not options.version:
+       # make auto mode if no version specified
+       self.SetAlternative()
+       self.sandbox_id = self.GetAlternatives().current_sandbox_id
+    else:
+      # If you don't specify --new_release option, then this would
+      # search existing sandboxes with the specified version.
+      if options.new_release.lower() != 'true':
+        alternatives = self.GetAlternatives()
+        for alternative in alternatives.alternatives:
+          if alternative.sandbox.version == options.version:
+            self.sandbox_id = alternative.sandbox.sandbox_id
+            # Set manual mode and the found sandbox as default.
+            self.SetAlternative(self.sandbox_id)
+
+      # if there's no version in the cell, make auto mode and creates
+      # a new sandbox.
+      if not self.sandbox_id:
+        self.SetAlternative()
+        self.new_sandbox = True
+        self.sandbox_id ='%d.%s.%s.%s@%s' % (
+            int(time.time()), self._NormalizeId(options.version),
+            self._NormalizeId(options.role),
+            self._NormalizeId(options.owner),
+            self._NormalizeId(self.cell.node))
+
+    if not self.sandbox_id:
+      raise Exception('No sandbox id recognized')
+
+  def _GenSandbox(self):
+    sandbox_text = """
+sandbox_id: "%s"
+owner: "%s"
+role: "%s"
+system: "%s"
+system_options: "%s"
+version: "%s"
+provisioning_time: %s
+""" % (self.sandbox_id, options.owner, options.role, options.system,
+       options.system_options, options.version, self.sandbox_id.split('.')[0])
+
+    sandbox = ips.proto.sandbox_pb2.Sandbox()
+    google.protobuf.text_format.Merge(sandbox_text, sandbox)
+    return sandbox
+
+  def GetState(self, sandbox_id=None):
+    while True:
+      try:
+        method, request = ips.handlers.FormzRpcClient.GetMethodAndRequest(
+            'ips_proto_sandbox.SandboxService', 'getState')
+        request.sandbox_id = sandbox_id or self.sandbox_id
+        return self.rpc_client.Call(method, request)
+      except google.protobuf.service.RpcException, e:
+        logging.info('got RPC exception: %s', str(e))
+        time.sleep(1)
+
+  def _SendEvent(self, event, sandbox_id=None):
+    while True:
+      method, request = ips.handlers.FormzRpcClient.GetMethodAndRequest(
+          'ips_proto_sandbox.SandboxService', 'sendEvent')
+      request.sandbox_id = sandbox_id or self.sandbox_id
+      request.event = event
+      if event == ips.proto.sandbox_pb2.SendEventRequest.PROVISIONING:
+        request.spec.provisioning.CopyFrom(self._GenSandbox())
+      response = self.rpc_client.Call(method, request)
+      if response.status == ips.proto.sandbox_pb2.SendEventResponse.SUCCESS:
+        return response
+      logging.warning('Failed to send an event to %s on %s: %s',
+          request.sandbox_id, self.cell.node, response.description)
+      time.sleep(1)
+
+  def _Shutdown(self, sandbox_id=None):
+    sandbox_id = sandbox_id or self.sandbox_id
+    logging.info('Shutting down %s on %s', sandbox_id, self.cell.node)
+    self._SendEvent(ips.proto.sandbox_pb2.SendEventRequest.SHUTDOWN, sandbox_id)
+    state = self.GetState(sandbox_id)
+    while state.state != ips.proto.sandbox_pb2.STOP:
+      time.sleep(1)
+      state = self.GetState(sandbox_id)
+      logging.debug('State of %s: %s', sandbox_id, state)
+
+  def _Start(self, sandbox_id=None):
+    sandbox_id = sandbox_id or self.sandbox_id
+    logging.info('Starting %s on %s', sandbox_id, self.cell.node)
+    self._SendEvent(ips.proto.sandbox_pb2.SendEventRequest.START, sandbox_id)
+    state = self.GetState(sandbox_id)
+    while state.state != ips.proto.sandbox_pb2.READY:
+      time.sleep(1)
+      state = self.GetState(sandbox_id)
+      logging.debug('State of %s: %s', sandbox_id, state)
+    self._SendEvent(ips.proto.sandbox_pb2.SendEventRequest.OPEN_NETWORK,
+                    sandbox_id)
+
+  def _StartProvisioning(self):
+    logging.info('Provisioning %s on %s', self.sandbox_id, self.cell.node)
+    self._SendEvent(ips.proto.sandbox_pb2.SendEventRequest.PROVISIONING)
+    state = self.GetState()
+    while state.state != ips.proto.sandbox_pb2.STOP:
+      time.sleep(1)
+      state = self.GetState()
+      if state.state == ips.proto.sandbox_pb2.FAILED:
+        raise UpdateTask.UpdateException(
+            'Failed to create sandbox: %s on %s: %s',
+            self.sandbox_id, self.cell.node, state.description)
+      logging.debug('State of %s: %s', self.cell.node, state)
+
+  def GetAlternatives(self):
+    method, request = ips.handlers.FormzRpcClient.GetMethodAndRequest(
+        'ips_proto_sandbox.SandboxService', 'getAlternatives')
+    request.generic_name.owner = options.owner
+    request.generic_name.role = options.role
+    return self.rpc_client.Call(method, request)
+
+  def SetAlternative(self, sandbox_id=None):
+    method, request = ips.handlers.FormzRpcClient.GetMethodAndRequest(
+        'ips_proto_sandbox.SandboxService', 'setAlternative')
+    request.generic_name.owner = options.owner
+    request.generic_name.role = options.role
+    if sandbox_id:
+      request.sandbox_id = sandbox_id
+    return self.rpc_client.Call(method, request)
+
+  def _LaunchCurrentVersion(self):
+    alternatives = self.GetAlternatives()
+
+    current_state = self.GetState(alternatives.current_sandbox_id)
+    if current_state.state == ips.proto.sandbox_pb2.READY:
+      return True
+
+    for alternative in alternatives.alternatives:
+      state = self.GetState(alternative.sandbox.sandbox_id)
+      if state.state in (ips.proto.sandbox_pb2.READY,
+                         ips.proto.sandbox_pb2.BOOT):
+        self._Shutdown(alternative.sandbox.sandbox_id)
+
+    self._Start(alternatives.current_sandbox_id)
+
+  def run(self):
+    self.update_manager.semaphore.acquire()
+    logging.info('Staring update task of %s', self.cell.node)
+    self.state = 'updating'
+    try:
+      if self.new_sandbox:
+        self._StartProvisioning()
+      if options.not_start.lower() == 'false':
+        self._LaunchCurrentVersion()
+    except Exception, e:
+      self.state = 'failed'
+      raise e
+    finally:
+      self.update_manager.semaphore.release()
+    logging.info('Finished update of %s', self.cell.node)
+    self.state = 'ready'
+
+
+class UpdateManager(threading.Thread):
+
+  def __init__(self, cell_pattern):
+    super(UpdateManager, self).__init__()
+    self.rpc_client = ips.handlers.FormzRpcClient(options.manager)
+    self.cell_regexp = re.compile(cell_pattern)
+    self._InitUpdateTask()
+    self.semaphore = threading.Semaphore(options.num_updates)
+    self.start_at = None
+    self.finish_at = None
+
+  def GetCells(self):
+    method, request = ips.handlers.FormzRpcClient.GetMethodAndRequest(
+        'ips_proto_manager.ManagerService', 'getCells')
+    return self.rpc_client.Call(method, request)
+
+  def SearchSandbox(self, query):
+    method, request = ips.handlers.FormzRpcClient.GetMethodAndRequest(
+        'ips_proto_manager.ManagerService', 'searchSandbox')
+    request.query = query
+    return self.rpc_client.Call(method, request)
+
+  def iternodes(self):
+    if options.cell:
+      cell = ips.proto.manager_pb2.Cell()
+      cell.node = options.cell
+      cell.url = 'http://%s' % options.cell
+      yield cell
+    else:
+      for cell in self.GetCells().cells:
+        if self.cell_regexp.search(cell.node):
+          yield cell
+
+  def _InitUpdateTask(self):
+    self.tasks = []
+    for cell in self.iternodes():
+      self.tasks.append(UpdateTask(cell, self))
+
+  def run(self):
+    self.start_at = '%s %s' % (time.ctime(time.time()), time.tzname[1])
+    for task in self.tasks:
+      task.start()
+    for task in self.tasks:
+      task.join()
+    self.finish_at = '%s %s' % (time.ctime(time.time()), time.tzname[1])
+    wait_time = options.refresh_rate * 2
+    logging.info(
+        'update task finished. waiting %d seconds to stop the server',
+        wait_time)
+    time.sleep(wait_time)
+    ips.tools.StopTool()
+ 
+
+class StatuszHandler(tornado.web.RequestHandler):
+
+  TEMPLATE = """
+<html>
+  <head>
+    %s
+    <style type="text/css">
+
+ul.tab {
+  margin: 0;
+  padding: 0;
+  border-bottom: 2px #ddd solid;
+}
+
+ul.tab li {
+  float: left;
+  margin: 0 0 0 5px;
+  position: relative;
+  bottom: -2px;
+  list-style-type: none;
+  border: 1px #ddd solid;
+  border-top: none;
+  border-bottom: 2px #ddd solid;
+}
+
+ul.tab li.none {
+  border-bottom: 2px #fff solid;
+  font-weight: bold;
+}
+
+ul.tab li.ready {
+  background: lightgreen;
+}
+
+ul.tab li.updating {
+  background: yellow;
+}
+
+ul.tab li.waiting {
+  background: #fff;
+}
+
+ul.tab li.failed {
+  background: red;
+}
+
+ul.tab li a {
+  //color: lightgreen;
+  display: block;
+  padding: 3px 10px 5px;
+  text-decoration: none;
+}
+
+ul.tab li a:hover {
+  position: relative;
+  bottom: 6px;
+}
+
+.clear:after {
+  content: "";
+  display: block;
+  overflow: hidden;
+}
+
+.clear:after {
+  clear: both;
+}
+
+.clear {
+  zoom: 1;
+}
+
+    </style>
+  </head>
+  <body>
+
+  <h2>Status of Update Manager of Role '%s' Owner '%s'</h2>
+  <pre>%s</pre>
+  <ul class="tab clear">
+    %s
+  </ul>
+  </body>
+</html>"""
+
+  def initialize(self, update_manager):
+    self.update_manager = update_manager
+
+  def get(self):
+    self.write(self._GenHtml())
+
+  def _GenHtml(self):
+    return StatuszHandler.TEMPLATE % (self._GenRefresh(),
+                                      options.role,
+                                      options.owner,
+                                      self._GenStatus(),
+                                      self._GenTab())
+
+  def _GenStatus(self):
+    buf = ''
+    buf += 'Start at %s\n' % self.update_manager.start_at
+    if self.update_manager.finish_at:
+      buf += 'Finish at %s\n' % self.update_manager.finish_at
+    buf += '\n'
+    buf += 'Number of updates at the same time: %d\n' % options.num_updates
+    buf += 'Updating to: %s\n' % options.version
+    buf += 'Progress: %d/%d\n' % (self._GetNumFinishedTask(),
+                                  self._GetNumTask())
+    return buf
+
+  def _GenRefresh(self):
+    if self._GetNumFinishedTask() != self._GetNumTask():
+      return '<meta http-equiv="refresh" content="%d">' % options.refresh_rate
+    return ''
+
+  def _GetNumTask(self):
+    return len(self.update_manager.tasks)
+
+  def _GetNumFinishedTask(self):
+    i = 0
+    for task in self.update_manager.tasks:
+     if task.state in ("ready", "failed"):
+       i += 1
+    return i
+
+  def _GenTab(self):
+    buf = ''
+    for task in self.update_manager.tasks:
+      buf += '<li class="%s"><a href="%s/statusz">_</a></li>' % (task.state,
+                                                                 task.cell.url)
+    return buf
+
+
+def main():
+  args = ips.server.ParseOptions()
+
+  update_manager = UpdateManager(options.cell_pattern)
+  handlers = ips.server.InitWebHandlers(sys.argv[0])
+  handlers.append((r"/statusz",
+                   StatuszHandler, dict(update_manager=update_manager)))
+
+  ips.tools.StartTool(update_manager, handlers)
+
+
+if __name__ == '__main__':
+  main()

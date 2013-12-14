@@ -1,0 +1,92 @@
+// Copyright (c) 2013, Masato Taruishi <taru0216@gmail.com>
+// Author: Masato Taruishi <taru0216@gmail.com>
+// 
+// This protocol buffers defines Variable which specifies the
+// current value of a measured data.
+//
+// The main purpose of Variable is to express meters for a
+// specific data. The type of meters are as follows:
+//
+//  counter: Monotonic increasing meter, it could be zero if the value is
+//           overflowed.
+//  gauge: Meter to hold number.
+//  string: Meter to hold string.
+//  map: Map groups several probe targets in the same meter.
+//
+syntax = "proto2";
+
+
+package ips_proto_variables;
+
+
+// Variable is a raw probe data represented by key and value pair.
+message Variable {
+
+  // The name of Variable.
+  required string key = 1;
+
+  // Type of Variable.
+  enum Type {
+    GAUGE = 0;
+    COUNTER = 1;
+    STRING = 2;
+    MAP = 3;
+  }
+  required Type type = 2 [default = GAUGE];
+
+  // Value of Variable.
+  required group Value = 3 {
+    // Variable to hold any kind of numbers.
+    optional float gauge = 1;
+
+    // Monotonic Increasing Variable.
+    optional int64 counter = 2;
+
+    // String Variable.
+    optional string string = 3;
+
+    // Grouping several values as the one variable.
+    //
+    // Map is a way to group several values as the one variable by using
+    // 'columns' and 'values'. With 'columns', you can create a unique name
+    // for each value as follows:
+    //
+    //  columns = iface, packet_type
+    //  values: ('eth0', 'success', 12345)
+    //  values: ('eth0', 'error', 0)
+    // 
+    // The above variable defines 2 columns 'iface' and 'packet_type' and
+    // each value has the actual value for each column and the actual data.
+    // For the first value, its 'iface' column is 'eth0' and 'packet_type'
+    // is 'success' and the actual data is 12345. Every actual data needs
+    // to be the same meter type such as GAUGE and COUNTER.
+    //
+    optional group Map = 4 {
+      // The list of columns this map has such as ['iface', 'type'].
+      repeated string columns = 1;
+
+      // Type of Variable for all values in this map.
+      enum Type {
+        GAUGE = 0;
+        COUNTER = 1;
+        STRING = 2;
+      }
+      required Type type = 2 [default = GAUGE];
+
+      repeated group Value = 3 {
+        // The actual list of column names for each value
+        // such as ['eth0', 'success'].
+        repeated string column_names = 1;
+
+        // Variable to hold any kind of numbers.
+        optional float gauge = 2;
+
+        // Monotonic Increasing Variable.
+        optional int64 counter = 3;
+
+        // String Variable.
+        optional string string = 4;
+      }
+    }
+  }
+}

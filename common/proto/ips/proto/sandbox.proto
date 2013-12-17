@@ -1,0 +1,329 @@
+// Copyright (c) 2013, Masato Taruishi <taru0216@gmail.com>
+//
+// Definitions for iPS Sandbox.
+//
+// Sandbox is isolated runtime environment. Each sandbox runs separately
+// from others such as hypervisor and other sandboxes.
+//
+//
+syntax = "proto2";
+
+
+package ips_proto_sandbox;
+
+
+option py_generic_services = true;
+
+
+// request argument for getSandbox method
+message GetSandboxesRequest {
+}
+
+
+// response argument for getSandbox method
+message GetSandboxesResponse {
+  // list of sandbox name
+  repeated string sandbox_id = 1;
+}
+
+
+// request argument for getStatus method
+message GetStatusRequest {
+}
+
+
+// response argument for getStatus method
+message GetStatusResponse {
+  // string-represented status for sandboxes.
+  optional string status = 1;
+}
+
+
+// request argument for getInfo method
+message GetInfoRequest {
+  // name of sandbox
+  required string sandbox_id = 1;
+}
+
+
+// response argument for getInfo method
+message GetInfoResponse {
+  // string-represented Info for sandbox
+  optional string info = 1;
+}
+
+
+enum State {
+  NONE = 0;
+  PROVISIONING = 1;
+  FAILED = 2;
+  STOP = 3;
+  BOOT = 4;
+  READY = 5;
+  ARCHIVING = 6;
+  ARCHIVED = 7;
+}
+
+
+// request argument for getState method
+message GetStateRequest {
+
+  // sandbox
+  required string sandbox_id = 1;
+}
+
+
+// response argument for getState method
+message GetStateResponse {
+
+  // current state of the sandbox
+  required State state = 1;
+
+  // description of the state
+  optional string description = 2;
+}
+
+
+message Sandbox {
+
+  // id of the sandbox. sandbox_id is a universally unique id.
+  required string sandbox_id = 1;
+
+  // the owner of this sandbox
+  required string owner = 2;
+
+  // role of this sandbox
+  required string role = 3;
+
+  // system of this sandbox
+  required string system = 4 [default="ubuntu"];
+
+  // role type options of this sandbox
+  optional string system_options = 5 [default="-r precise"];
+
+  // version of this sandbox
+  required string version = 6 [default="v12.04"];
+
+  // seconds since epoch when this sandbox was created
+  optional int32 provisioning_time = 7;
+
+  // comment of the sandbox
+  optional string comment = 8;
+
+  // resource requirements
+  optional group Requirements = 9 {
+
+    // Required disk space such as '1G'. -1 specifies unlimited disk space.
+    optional string disk = 1;
+
+    // List of tcp port numbers which the sandbox accepts from external.
+    repeated int32 ports = 2;
+  }
+}
+
+
+// request argument for sendEvent method
+message SendEventRequest {
+  required string sandbox_id = 1;
+
+  enum Event {
+    // Creates a new sandbox.
+    PROVISIONING = 0;
+
+    // Starts the sandbox.
+    START = 1;
+
+    // Sends Ctrl-Alt-Del to the sandbox.
+    REBOOT = 2;
+
+    // Sends shutdown event to the sandbox.
+    SHUTDOWN = 3;
+
+    // Kills the sandbox.
+    STOP = 4;
+
+    // Removes the sandbox.
+    DESTROY = 5;
+
+    // Opens network traffic.
+    OPEN_NETWORK = 6;
+
+    // Makes network traffic lameduck mode.
+    LAMEDUCK_NETWORK = 7;
+
+    // Archives the sandbox. The sandbox must be stopped.
+    ARCHIVE = 8;
+  }
+  required Event event = 2;
+
+  optional group Spec = 3 {
+    optional Sandbox provisioning = 1;
+  }
+}
+
+
+message SendEventResponse {
+
+  // result status of sendEvent method
+  enum Status {
+    SUCCESS = 0;
+    FAILED = 1;
+  }
+  required Status status = 1;
+
+  // description of the result
+  optional string description = 2;
+}
+
+
+// Generic Name is a name grouping multiple sandboxes. Each sandbox joins
+// in a group specified by GenericName and is called alternatives in the group.
+// Each alternative has priority in the group and administrators can choose
+// one of alternatives for the target sandbox for the group.
+//
+// Typically, this is used to handle sandbox version up/rollback. When you
+// want to upgrade your sandbox, then you can create a new sandbox which has
+// higher priority in the group and restart with the new version. If you
+// encounter a problem for the new version, then you can choose the previous
+// sandbox as the target sandbox for the group and restart it.
+message GenericName {
+  // owner
+  required string owner = 1;
+
+  // role
+  required string role = 2;
+}
+
+
+// Request argument of getGenericNames method.
+message GetGenericNamesRequest {
+}
+
+
+// Response message of getGenericNames method.
+message GetGenericNamesResponse {
+
+  // a list of GenericNames
+  repeated GenericName generic_names = 1;
+}
+
+
+// Request argument of getAlternatives method.
+message GetAlternativesRequest {
+  required GenericName generic_name = 1;
+}
+
+
+// Response message of getAlternatives method.
+message GetAlternativesResponse {
+  // Mode of alternatives.
+  enum Mode {
+    AUTO = 0;
+    MANUAL = 1;
+  };
+  required Mode mode = 1;
+
+  // The current sandbox of the alternatives.
+  required string current_sandbox_id = 2;
+
+  // A list of sandboxes of the alternatives.
+  repeated group Alternatives = 3 {
+    // sandbox id of this alternative
+    required Sandbox sandbox = 1;
+
+    // the priority of this alternative
+    required int32 priority = 2;
+  };
+}
+
+
+// Request argument of setAlternatives method.
+message SetAlternativeRequest {
+  required GenericName generic_name = 1;
+
+  // The sandbox id to ge an alternative for this alternatives. If not
+  // specified, AUTO mode is set.
+  optional string sandbox_id = 2;
+}
+
+
+// Response message of setAlternatives method.
+message SetAlternativeResponse {
+
+  // result status of setAlternative method
+  enum Status {
+    SUCCESS = 0;
+    FAILED = 1;
+  }
+  required Status status = 1;
+
+  optional string description = 2;
+}
+
+// service for Sandbox manipulation
+service SandboxService {
+
+  // Gets a lit of generic names.
+  //
+  // Generic name is the name of a group which holds several sandboxes which
+  // have the same role and owner. Sandboxes in a group are called
+  // 'alternatives' for the generic name. You can set the default sandbox
+  // for the alternatives.
+  //
+  // +---- GenericName (role, owner) ---+
+  // |                                  |
+  // | sandbox1, sandbox2, sandbox3     |
+  // |   /\                             |
+  // |   || default                     |
+  // +----------------------------------+
+  //
+  // the rpc 'getGenericNames' returns a list of all the groups in the
+  // server, and you can use 'getAlternatives' to get sandboxes for the
+  // specified generic name and 'setAlternative' to set the default sandbox
+  // in the generic name.
+  rpc getGenericNames(GetGenericNamesRequest) returns (GetGenericNamesResponse);
+
+  // Gets a list of sandboxes in the specified alternatives.
+  //
+  // Alternatives are sandboxes in the specified generic name. See the comment
+  // on 'getGenericNames' rpc.
+  rpc getAlternatives(GetAlternativesRequest) returns (GetAlternativesResponse);
+
+  // Sets the alternative of the specified alternatives.
+  //
+  // Set the default sandbox for the specified generic name. You can make it
+  // auto-mode. See comments on SetAlternativeRequest for more detail.
+  rpc setAlternative(SetAlternativeRequest) returns (SetAlternativeResponse);
+
+  // Gets the current state of the sandbox.
+  //
+  // Sandbox has several states such as STOP/BOOT/READY/NONE. Each state
+  // shows how the sandbox is. For example, the state 'READY' means the
+  // sandbox is running correctly and ready to accept requests. State
+  // is automatically changed and also you can change the state by sending
+  // an event to the sandbox. See rpc 'sendEvent' for more detail.
+  //
+  // For complete states, see comments in GetStateResponse.
+  rpc getState(GetStateRequest) returns (GetStateResponse);
+
+  // Sends a event to the sandbox
+  //
+  // You can control sandboxes by sending an event. For example, you can
+  // start your sandbox by sending 'START' event. If you send the event
+  // and the sandbox succefully accepts the event, then the sandbox starts
+  // trying to start. If the sandbox can start correctly, then the state
+  // of the sandbox is changed to 'BOOT' and then finally 'READY'
+  //
+  // For complete events, see comments in SendEventRequest.
+  rpc sendEvent(SendEventRequest) returns (SendEventResponse);
+
+  // Gets a list of sandbox.
+  rpc getSandboxes(GetSandboxesRequest) returns (GetSandboxesResponse);
+
+  // Gets the status of all sandboxes.
+  rpc getStatus(GetStatusRequest) returns (GetStatusResponse);
+
+  // Gets the status of the specified sandbox.
+  rpc getInfo(GetInfoRequest) returns (GetInfoResponse);
+
+}

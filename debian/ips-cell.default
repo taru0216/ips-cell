@@ -1,0 +1,8 @@
+# Defaults for ips-cell initscript
+# sourced by /etc/init.d/ips-cell
+# installed at /etc/default/ips-cell by the maintainer scripts
+
+# This is a POSIX shell fragment
+
+# Additional options that are passed to the Daemon.
+DAEMON_OPTS=""

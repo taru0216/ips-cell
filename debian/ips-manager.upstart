@@ -1,0 +1,9 @@
+author "Masato Taruishi <taru0216@gmail.com>"
+description "iPS Manager Daemon"
+
+start on runlevel [2345]
+stop on runlevel [016]
+
+respawn
+
+exec /usr/bin/ips-manager --log_file_prefix=/var/log/ips-manager.log --varz_disk=true

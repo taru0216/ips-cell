@@ -1,0 +1,11 @@
+ips-cell (13.12.1387268288-1) precise; urgency=low
+
+  * The first release with GPL3 lincense.
+
+ -- Masato Taruishi <taru0216i@gmail.com>  Tue, 17 Dec 2013 17:18:35 +0900
+
+ips-cell (13.12.1387035909-1) precise; urgency=low
+
+  * Initial release. 
+
+ -- Masato Taruishi <taru0216@gmail.com>  Sat, 14 Dec 2013 16:08:25 +0000

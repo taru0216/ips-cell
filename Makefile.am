@@ -42,6 +42,15 @@ install-data-local: buildinfo
 deb:
 	debuild -b -us -uc
 
+release:
+	./bootstrap
+	./configure
+	debian/rules clean
+	./configure
+	make dist
+	mv $(distdir).tar.gz ../$(PACKAGE)_$(VERSION).orig.tar.gz
+	debuild -S
+
 clean-local:
 	srcdir=$(srcdir) $(PYTHON) $(srcdir)/setup.py clean
 	/bin/rm -rf python.stamp gen/ *.egg-info/ build/ buildinfo

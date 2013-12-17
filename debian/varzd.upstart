@@ -1,0 +1,26 @@
+author "Masato Taruishi <taru0216@gmail.com>"
+description "Varz Daemon"
+
+start on runlevel [2345]
+stop on runlevel [016]
+
+respawn
+
+pre-start script
+  test -x /usr/bin/varzd || { stop; exit 0; }
+end script
+
+script
+  PORT=6197
+  test -f /etc/default/varzd && . /etc/default/varzd
+  exec /usr/bin/varzd \
+      --log_file_prefix=/var/log/varzd.log \
+      --varz_disk=true \
+      --varz_memory=true \
+      --varz_netstat=true \
+      --varz_packages=true \
+      --varz_network=true \
+      --enable_devz=false \
+      --port=$PORT \
+      $DAEMON_OPTS
+end script

@@ -1,0 +1,13 @@
+# Defaults for varzd initscript
+# sourced by /etc/init.d/varzd
+# installed at /etc/default/varzd by the maintainer scripts
+
+#
+# This is a POSIX shell fragment
+#
+
+# Uncomment this and change the number to change the port to listen
+#PORT="6197"
+
+# Additional options that are passed to the Daemon.
+DAEMON_OPTS=""

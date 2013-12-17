@@ -8,7 +8,7 @@ Standards-Version: 3.9.3
 Package: ips-common
 Architecture: all
 Depends: ${shlibs:Depends}, ${misc:Depends}
-Description: Induced Pluripotent Stem - common files
+Description: Induced Pluripotent Stem Computing Cell - common files
  iPS is a small operating system which hosts isolated
  systems on it. Each environment running the operating system
  is called 'iPS cell' which can be controlled and managed by
@@ -21,7 +21,7 @@ Package: python-ips
 Section: python
 Architecture: all
 Depends: ${misc:Depends}, ${python:Depends}, python-tornado, python-avahi, python-protobuf, python-gobject, avahi-daemon, ips-common, lsb-release
-Description: Induced Pluripotent Stem - common files
+Description: Induced Pluripotent Stem Computing Cell - common files
  iPS is a small operating system which hosts isolated
  systems on it. Each environment running the operating system
  is called 'iPS cell' which can be controlled and managed by
@@ -32,7 +32,7 @@ Description: Induced Pluripotent Stem - common files
 Package: ips-client
 Architecture: all
 Depends: ${shlibs:Depends}, ${misc:Depends}, ${python:Depends}, python-ips, python-tornado, python-protobuf
-Description: Induced Pluripotent Stem - clients
+Description: Induced Pluripotent Stem Computing Cell - clients
  iPS is a small operating system which hosts isolated
  systems on it. Each environment running the operating system
  is called 'iPS cell' which can be controlled and managed by
@@ -44,11 +44,17 @@ Description: Induced Pluripotent Stem - clients
 Package: ips-cell
 Architecture: all
 Depends: ${shlibs:Depends}, ${misc:Depends}, ${python:Depends}, python-ips, lxc, ajaxterm, lvm2, apparmor, bzip2, glusterfs-client, cgroup-lite
-Description: Induced Pluripotent Stem - Cell
+Description: Induced Pluripotent Stem Computing Cell - Cell
  This package contains necessary files for iPS cells.
 
 Package: ips-manager
 Architecture: all
 Depends: ${shlibs:Depends}, ${misc:Depends}, ${python:Depends}, radvd, python-ips 
-Description: Induced Pluripotent Stem - Manager
+Description: Induced Pluripotent Stem Computing Cell - Manager
+ This package contains necessary files for iPS Manager.
+
+Package: varzd
+Architecture: all
+Depends: ${shlibs:Depends}, ${misc:Depends}, ${python:Depends}, python-ips
+Description: Induced Pluripotent Stem Computing Cell - Manager
  This package contains necessary files for iPS Manager.

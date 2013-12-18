@@ -1,3 +1,9 @@
+ips-cell (13.12.1387329631-1) precise; urgency=low
+
+  * Added varzd package.
+
+ --  <taru0216@gmail.com>  Wed, 18 Dec 2013 01:21:34 +0000
+
 ips-cell (13.12.1387268288-1) precise; urgency=low
 
   * The first release with GPL3 lincense.

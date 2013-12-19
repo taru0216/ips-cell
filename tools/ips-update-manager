@@ -142,11 +142,11 @@ class UpdateTask(threading.Thread):
       if not self.sandbox_id:
         self.SetAlternative()
         self.new_sandbox = True
-        self.sandbox_id ='%d.%s.%s.%s@%s' % (
-            int(time.time()), self._NormalizeId(options.version),
+        self.sandbox_id ='%s.%s.%s.%s@%s' % (
+            hex(int(time.time()))[2:], self._NormalizeId(options.version),
             self._NormalizeId(options.role),
             self._NormalizeId(options.owner),
-            self._NormalizeId(self.cell.node))
+            self._NormalizeId(self.cell.node.split(':')[0]))
 
     if not self.sandbox_id:
       raise Exception('No sandbox id recognized')
@@ -161,7 +161,7 @@ system_options: "%s"
 version: "%s"
 provisioning_time: %s
 """ % (self.sandbox_id, options.owner, options.role, options.system,
-       options.system_options, options.version, self.sandbox_id.split('.')[0])
+       options.system_options, options.version, int(time.time()))
 
     sandbox = ips.proto.sandbox_pb2.Sandbox()
     google.protobuf.text_format.Merge(sandbox_text, sandbox)

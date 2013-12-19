@@ -16,6 +16,7 @@ import ips.flags
 import ips.handlers
 import ips.proto.sandbox_pb2
 import ips.proto.manager_pb2
+import ips.proto.variables_pb2
 import ips.sandbox_service
 import ips.server
 import ips.utils
@@ -242,10 +243,11 @@ class StatuszHandler(tornado.web.RequestHandler):
 
 class Manager:
 
-  def __init__(self, sandbox_service):
+  def __init__(self, variables, sandbox_service):
     self.thread = threading.Thread(target=self._Process)
     self.thread.daemon = True
 
+    self.variables = variables
     self.sandbox_service = sandbox_service
 
     self.zero = None
@@ -259,12 +261,33 @@ class Manager:
       self.zero.Monitor()
     self.thread.start()
 
+  def _UpdateCellVariables(self):
+    # target-blkio-requests
+    columns = ['target']
+    for sandbox_id in self.sandbox_service.GetSandboxes():
+      cmd = (
+          'cat /sys/fs/cgroup/blkio/lxc/%s/blkio.throttle.io_serviced |'
+          '    grep "^Total " |'
+          '    cut -d" " -f2' % sandbox_id)
+      try:
+        blkio_io_serviced = ips.utils.CallExternalCommand(cmd).strip()
+
+        values = [(sandbox_id, int(blkio_io_serviced))]
+        var = self.variables.CreateMapVariable(
+            'target-blkio-requests',
+            columns, ips.proto.variables_pb2.Variable.Value.Map.COUNTER,
+            values)
+        self.variables[var.key] = var
+      except (ValueError, ips.utils.CommandExitedWithError):
+        pass
+
   def _Process(self):
     while True:
       if _Manager.Get():
         logging.info('Updating registration info')
         self._RegisterToManager()
-      time.sleep(300)
+      self._UpdateCellVariables()
+      time.sleep(60)
 
   def _OnManagerUpdated(self, name, address, port):
     logging.info('Use manager %s:%s', address, port)
@@ -316,7 +339,9 @@ def main():
   args = _ParseOptions()
 
   sandbox_service = ips.sandbox_service.LxcSandboxService()
-  manager = Manager(sandbox_service)
+  variables = ips.server.InitVariables()
+
+  manager = Manager(variables, sandbox_service)
   services = [sandbox_service]
 
   USAGE = """
@@ -334,7 +359,7 @@ def main():
     path = '/formz/%s/' % service.GetDescriptor().full_name
     USAGE += '<li><a href="%s">%s</a>' % (path, path)
 
-  handlers = ips.server.InitWebHandlers('ips-cell')
+  handlers = ips.server.InitWebHandlers('ips-cell', variables)
   handlers.append((r"/statusz", StatuszHandler,
       dict(usage=USAGE,
            manager=manager,

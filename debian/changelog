@@ -1,3 +1,15 @@
+ips-cell (13.12.1387462684-1) precise; urgency=low
+
+  * Added target-blkio-requests varz.
+
+ --  <taru0216@gmail.com>  Thu, 19 Dec 2013 14:19:12 +0000
+
+ips-cell (13.12.1387428382-1) precise; urgency=low
+
+  * Optimizes sandbox instance name to avoid a long name.
+
+ -- Masato Taruishi <taru0216@gmail.com>  Thu, 19 Dec 2013 13:46:46 +0900
+
 ips-cell (13.12.1387329631-1) precise; urgency=low
 
   * Added varzd package.

@@ -1,3 +1,9 @@
+ips-cell (1387524558-1) precise; urgency=low
+
+  * Fixed double target-blkio-requests because of LVM IO counters.
+
+ -- Masato Taruishi <taru0216@gmail.com>  Fri, 20 Dec 2013 07:29:56 +0000
+
 ips-cell (13.12.1387462684-1) precise; urgency=low
 
   * Added target-blkio-requests varz.

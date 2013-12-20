@@ -267,8 +267,11 @@ class Manager:
     for sandbox_id in self.sandbox_service.GetSandboxes():
       cmd = (
           'cat /sys/fs/cgroup/blkio/lxc/%s/blkio.throttle.io_serviced |'
-          '    grep "^Total " |'
-          '    cut -d" " -f2' % sandbox_id)
+          "    grep '^8:' |"
+          '    grep Total |'
+          "    cut -d' ' -f3 |"
+          "    awk 'BEGIN { sum = 0; } { sum = sum + $1; } END {print sum;}'"
+          % sandbox_id)
       try:
         blkio_io_serviced = ips.utils.CallExternalCommand(cmd).strip()
 

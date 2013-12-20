@@ -1,3 +1,33 @@
+ips-cell (13.12.1387524558-1) precise; urgency=low
+
+  * Fixed double target-blkio-requests because of LVM IO counters.
+
+ -- Masato Taruishi <taru0216@gmail.com>  Fri, 20 Dec 2013 07:29:56 +0000
+
+ips-cell (13.12.1387462684-1) precise; urgency=low
+
+  * Added target-blkio-requests varz.
+
+ --  <taru0216@gmail.com>  Thu, 19 Dec 2013 14:19:12 +0000
+
+ips-cell (13.12.1387428382-1) precise; urgency=low
+
+  * Optimizes sandbox instance name to avoid a long name.
+
+ -- Masato Taruishi <taru0216@gmail.com>  Thu, 19 Dec 2013 13:46:46 +0900
+
+ips-cell (13.12.1387329631-1) precise; urgency=low
+
+  * Added varzd package.
+
+ --  <taru0216@gmail.com>  Wed, 18 Dec 2013 01:21:34 +0000
+
+ips-cell (13.12.1387268288-1) precise; urgency=low
+
+  * The first release with GPL3 lincense.
+
+ -- Masato Taruishi <taru0216i@gmail.com>  Tue, 17 Dec 2013 17:18:35 +0900
+
 ips-cell (13.12.1387035909-1) precise; urgency=low
 
   * Initial release. 

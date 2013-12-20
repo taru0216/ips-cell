@@ -1,0 +1,18 @@
+#!/usr/bin/python
+
+
+__author__    = 'Masato Taruishi'
+__copyright__ = 'Copyright (c) 2013, Masato Taruishi'
+
+from tornado.options import define, options
+
+import ips.tools
+import threading
+
+
+def main():
+  ips.tools.StartTool(threading.Thread())
+
+
+if __name__ == '__main__':
+  main()

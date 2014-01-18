@@ -1,3 +1,9 @@
+ips-cell (14.01.1390036067-1) precise; urgency=low
+
+  * Added ips-mon-scraped
+
+ -- Masato Taruishi <taru0216@gmail.com>  Sat, 18 Jan 2014 09:08:29 +0000
+
 ips-cell (13.12.1387524558-1) precise; urgency=low
 
   * Fixed double target-blkio-requests because of LVM IO counters.

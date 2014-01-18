@@ -58,6 +58,13 @@ Architecture: all
 Depends: ${shlibs:Depends}, ${misc:Depends}, ${python:Depends}, python-ips
 Description: Induced Pluripotent Stem Computing Cell - Simple monitoring daemon
  This package contains varzd daemon which collects system information in
- the same format used in iPS cell monitoring. By install this daemon, you
+ the same format used in iPS cell monitoring. By installing this daemon, you
  can monitor your own system which is not a part of iPS cells, in iPS cell
  monitoring framework.
+
+Package: ips-mon-scraped
+Architecture: all
+Depends: ${shlibs:Depends}, ${misc:Depends}, ${python:Depends}, python-ips
+Description: Induced Pluripotent Stem Computing Cell - iPS varz scraping daemon
+ This package contains a daemon which scrapes varz endpoints exported by iPS
+ servers, processes with mathmatical calculation and stores them to OpenTSDB.

@@ -1,0 +1,47 @@
+# Defaults for ips-mon-scraped initscript
+# sourced by /etc/init/ips-mon-scraped.conf
+# installed at /etc/default/ips-mon-scraped by the maintainer scripts
+
+#
+# This is a POSIX shell fragment
+
+# Uncomment this and change the number to change the port to listen
+#PORT="4243"
+
+# Uncomment this and change path of ips-mon-scraped.log  
+LOG="/var/log/ips-mon-scraped.log"
+
+# Uncomment this and input interval for varz access 
+#INTERVAL="60"
+
+# Uncomment this and input mapping rules from varz to tsdb
+# disk-usage:{mounted=$1}:=varz\.disk-usage\.([^.*]+)\.integer
+VARZ_TO_TSDB_RULES='machine-load-average:=varz.machine-load-average'
+
+# Uncomment this and input operation to evaluate s-expression
+# (setq disk-usage_per_disk-size (/ disk-usage disk-size))
+#METRIC_OP_RULES=''
+
+# Uncommnet this and input targets like the following
+# IP:PORT:JOB:INDEX,IP:PORT:JOB:INDEX,...
+TARGETS="127.0.0.1:4243:ips-mon-scraped:0"
+
+# Uncomment this and input the datacenter
+# dc4, jpe1
+#DC=""
+
+# Uncomment this and input your environment
+# lab, dev, pro...
+#ENV=""
+
+# Uncomment this and input username for basic authentification 
+#USERNAME=""
+
+# Uncomment this and input password for basic authentification 
+#PASSWORD=""
+
+# Uncomment this ant input backend for storing put messages
+BACKEND="file:///var/lib/ips-mon-scraped/scraped.db"
+
+# Additional options that are passed to the Daemon.
+DAEMON_OPTS=""

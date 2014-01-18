@@ -56,7 +56,8 @@ define("password",
     default="", help="password for basic authentification",
     metavar="PASSWORD")
 define("backend",
-    default=["file:///var/lib/ips/mon/scraped.db"], help="Select a backend for storing data.",
+    default=["file:///var/lib/ips-mon-scraped/scraped.db"],
+    help="Select a backend for storing data.",
     multiple=True,
     metavar="URL")
 
@@ -389,7 +390,7 @@ class BackendFile(Backend):
     self.path = path
 
   def Write(self, metrics):
-    with open(self.path, "w") as f:
+    with open(self.path, "a") as f:
   
       # Use the same timestamp for periodic metrics to align timeseries.
       timestamp = time.mktime(time.gmtime())

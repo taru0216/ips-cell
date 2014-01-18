@@ -2,7 +2,7 @@
 # Process this file with autoconf to produce a configure script.
 
 AC_PREREQ([2.50])
-AC_INIT(ips-cell, 13.12.1387524558, [taru0216@gmail.com])
+AC_INIT(ips-cell, 14.01.1390036067, [taru0216@gmail.com])
 AM_INIT_AUTOMAKE([-Wno-portability])
 
 # Checks for programs.

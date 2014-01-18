@@ -1,0 +1,407 @@
+#!/usr/bin/python
+
+
+__author__    = 'Sungho Arai'
+__copyright__ = 'Copyright (c) 2014, Sungho Arai'
+
+
+from tornado.options import define, options
+
+import copy
+import ips.tools
+import json
+import logging
+import re
+import socket
+import StringIO
+import sys
+import threading
+import time
+import tornado.options
+import traceback
+import ips.mon
+import urllib
+import urllib2
+
+
+# command line options
+# /usr/bin/tsdb-agent
+# --targets="100.67.40.89:47247:tsdb-agent:0"
+# --match="disk-usage:{mounted=\$1}:=disk-usage\.([^.]+)\.integer
+# & memory-used:=memory-used"
+define('targets',
+    default="", help="<host>:<port>:<job>:<index>",
+    metavar="HOST:PORT:JOB:INDEX")
+define("interval",
+    default="60", 
+    help="interval time to fetch and store varz of targets",
+    metavar="SECONDS")
+define("varz_to_tsdb_rules",
+    default="", help="&-separated list of rules to map varz to tsdb",
+    metavar="METRIC:{TAG=$N}:=REGULAR EXPRESSION & ...")
+define("metric_op_rules",
+    default="",
+    help="&-separated list of s-expressions to create new metrics",
+    metavar="(setm NETMETRIC (OP METRIC1 METRIC2) & ...")
+define("dc",
+    default="", help="datacenter where targets run",
+    metavar="DATACENTER NAME")
+define("env",
+    default="", help="environment where targets run",
+    metavar="ENVIRONMENT NAME")
+define("username",
+    default="", help="username for basic authentification",
+    metavar="USERNAME")
+define("password",
+    default="", help="password for basic authentification",
+    metavar="PASSWORD")
+define("backend",
+    default=["file:///var/lib/tsdb-agent/db"], help="Select a backend for storing data.",
+    multiple=True,
+    metavar="URL")
+
+
+class Error(Exception):
+  """General exception of this module."""
+  pass
+
+
+class NotImplementedError(Error):
+  """Thrown when this method is not implemented."""
+  pass
+
+
+class UnsupportedURL(Error):
+  """Thrown when URL is not supported."""
+  pass
+
+
+class TsdbAgent(threading.Thread):
+
+  METRIC_RE = re.compile("(.*):{(.*)}")
+
+  def __init__(self):
+    super(TsdbAgent, self).__init__()
+    self.setDaemon(True)
+
+  def run(self):
+   try:
+     self._Run()
+   except Exception:
+     logging.error(traceback.format_exc()) 
+   finally:
+     ips.tools.StopTool()
+
+  def _Run(self):
+    if not self._InitFromOptions():
+      return
+
+    while True:
+      metrics = ips.mon.MetricRepository() 
+
+      logging.info("Started collecting varz from %d targets", len(self.targets))
+      threads = []
+      for target in self.targets:
+        t = threading.Thread(
+            target=self._CollectMetricForTarget,
+            args=(target, metrics,))
+        threads.append(t)
+        t.start()
+
+      logging.debug("Wating for %d threads", len(threads))
+      for i in range(len(threads)):
+        threads[i].join()
+        logging.debug("thread %d finished", i)
+
+      logging.debug("All threads joined")
+
+      self.metric_evaluator.Eval(
+          self.sexp_list_factory.GenSexpList(self.metric_op_rules, metrics),
+          metrics)
+
+      logging.info("Started storing %d metrics", len(metrics.metrics))
+      try:
+        self._StoreMetrics(metrics)
+      except socket.error as e:
+        logging.warning(
+            "Failed to store metrics: error:%s", e)
+
+      logging.info("Waiting %d seconds", self.interval)
+      time.sleep(self.interval)
+
+  def _InitFromOptions(self):
+    self.var_to_tsdb_rule = {}
+
+    if options.varz_to_tsdb_rules:
+      varz_to_tsdb_rules = options.varz_to_tsdb_rules.replace(
+          " ", "").split("&")
+      for rule in varz_to_tsdb_rules:
+        self.var_to_tsdb_rule[rule.split(":=")[1]] = rule.split(":=")[0]
+
+    if options.metric_op_rules:
+      self.metric_op_rules = options.metric_op_rules.split("&")
+    else:
+      self.metric_op_rules = []
+
+    self.username = options.username
+    self.password = options.password
+
+    self.dc = options.dc
+    self.env = options.env
+
+    self.interval = int(options.interval)
+
+    if options.targets:
+      self.targets = [
+          Target(target_info, self.dc, self.env, self.username, self.password)
+              for target_info in options.targets.replace(" ", "").split(",")
+      ]
+    else:
+      self.targets = []
+
+    self.backends = []
+    logging.info(options.backend)
+    for backend in options.backend:
+      try:
+        self.backends.append(Backend.BuildBackend(backend)) 
+      except UnsupportedURL:
+        logging.error("Unsupported URL specified: %s", options.backend)
+        f = StringIO.StringIO()
+        tornado.options.print_help(f)
+        logging.error(f.getvalue())
+        return False
+
+    logging.info("Backends: %s", options.backend) 
+
+    self.metric_evaluator = ips.mon.MetricEvaluator()
+    self.sexp_list_factory = ips.mon.SexpListFactory()
+
+    return True
+
+  def _CollectMetricForTarget(self, target, metrics):
+    try:
+      self._CollectMetricForTarget2(target, metrics)
+    except Exception:
+      logging.error(traceback.format_exc())
+
+  def _CollectMetricForTarget2(self, target, metrics):
+    varz_data = target.FetchVarzData()
+
+    metadata_tags = self._GenMetadataTags(varz_data["metadata"])
+
+    for var in self._NormalizeVarzData(varz_data, ''):
+      for metric in self._GetMetrics(var[0], var[1]):
+        metric.tags.extend(metadata_tags)
+        metrics.AddMetric(metric)
+
+  def _GenMetadataTags(self, metadata):
+    metadata_tags = [
+        "job=%s" % metadata["job"],
+        "index=%s" % metadata["index"]
+    ]
+    
+    if metadata["dc"]:
+      metadata_tags.append("dc=%s" % metadata["dc"])
+    if metadata["env"]:
+      metadata_tags.append("env=%s" % metadata["env"])
+
+    return metadata_tags
+    
+  def _GenPoints(self, varz):
+    points = []
+    self._MakePointsFromVarz(varz, '', points)
+    return points
+  
+  def _NormalizeVarzData(self, varz_data, parent=None):
+    """Normalize varz data
+
+    This method takes varz data and yields normalized var.
+    Varz data may have dictionary.
+    var_path = [<parent>.][<parents...>.]var
+    We name value corresponding to a var_path var_value
+    Normalized var is a pair of var_path and var_value
+
+    Args:
+      varz_data: dictionary
+      parent: string
+
+    Yields:
+      a tupple that consists of var_path and var_value 
+      
+    """
+    for node_name, node_value in varz_data.items():
+      if isinstance(node_value, dict):
+        for normalized_var in self._NormalizeVarzData(
+            node_value, 
+            parent + node_name + "."):
+          yield normalized_var
+      else:
+        var_path = parent + node_name
+        normalized_var = (var_path, node_value)
+        yield normalized_var 
+  
+  def _GetMetrics(self, var_path, var_value):
+    """Get metrics from var
+    
+    This method takes var_path and the value and 
+    yields a tupple that consists of metric name,
+    value and tags.
+
+    Args:
+      var_path: path of var, which is explained above
+      var_value: the value of var
+
+    Yields:
+      a tupple that consists of metric name, value and tags
+ 
+    """
+    for var, tsdb in self.var_to_tsdb_rule.iteritems():
+      matched_var = re.match(var + "$", var_path)
+      if matched_var:
+        matched_metric = TsdbAgent.METRIC_RE.search(tsdb)
+        if matched_metric:
+          metric_name = matched_metric.group(1)
+          tags = []
+          i = 1
+          for tagname in matched_metric.group(2).replace(" ", "").split(","):
+            if tagname.find("$") > 0:
+              tags.append(tagname.replace("$%d" % i, matched_var.group(i)))
+              i = i + 1
+            else:
+              tags.append(tagname)
+          yield ips.mon.Metric(metric_name, var_value, tags)
+        else:
+          yield ips.mon.Metric(tsdb, var_value) 
+
+  def _StoreMetrics(self, metrics):
+    for backend in self.backends:
+      backend.Write(metrics)
+
+
+class Target:
+
+  def __init__(self, target_info, dc, env, username, password):
+    info = target_info.split(":")
+    self.host = info[0]
+    self.port = info[1] 
+    self.job = info[2]
+    self.index = info[3]
+    self.dc = dc
+    self.env = env
+    self.username = username
+    self.password = password
+
+    password_mgr = urllib2.HTTPPasswordMgrWithDefaultRealm()
+    if self.username:
+      password_mgr.add_password(
+          None, self._GetUrl(), self.username, self.password)
+    self.opener = urllib2.build_opener(urllib2.HTTPBasicAuthHandler(password_mgr))
+
+  def _GetUrl(self):
+    return "http://" + self.host + ":" + self.port + "/varz"
+
+  def FetchVarzData(self):
+    varz_data = self._GenVarzData()
+
+    try:
+      url = self._GetUrl()
+      varz_data["varz"] = json.loads(self.opener.open(url, timeout=5).read())
+      varz_data["metadata"]["up"] = 1
+    except urllib2.URLError, err:
+      logging.warning(
+          "Failed to fetch varz: URL:%s, %s", url, str(err))
+    except urllib2.HTTPError, err:
+      logging.warning(
+          "Failed to fetch varz: URL:%s status:%d", url, err.code)
+
+    return varz_data
+
+  def _GenVarzData(self):
+    return {
+        "metadata": {
+            "probe": 1,
+            "job": self.job,
+            "dc": self.dc,
+            "index": self.index,
+            "env": self.env,
+            "up": 0,
+         }
+    }
+
+
+class Backend:
+
+  @classmethod
+  def BuildBackend(cls, backend):
+    type, rest = urllib.splittype(backend)
+    if type == "tsdb":
+      ip, port = urllib.splithost(rest)[0].split(":")
+      return BackendTSDB(ip, port)
+    elif type == "file":
+      path = urllib.splithost(rest)[1]
+      return BackendFile(path)
+    else:
+      raise UnsupportedURL
+
+  def Write(self, metrics):
+    raise NotImplementedError()
+
+  def _GenMessageFromMetric(self, metric, timestamp):
+    if not (isinstance(metric.value, float) or isinstance(metric.value, int)):
+      logging.warning("Float or int is expected for %s",
+          metric)
+      return None
+
+    message = "put %s %d %f %s" % (
+        metric.name,
+        timestamp,
+        metric.value,
+        " ".join(metric.tags))
+
+    return message
+
+    
+# Store metrics into TSDB 
+class BackendTSDB(Backend):
+  
+  def __init__(self, ip, port):
+    self.tsdb_ip = ip
+    self.tsdb_port = port 
+
+  def Write(self, metrics):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.connect((self.tsdb_ip, int(self.tsdb_port)))
+
+    # Use the same timestamp for periodic metrics to align timeseries.
+    timestamp = time.mktime(time.gmtime())
+    for metric in metrics:
+      message = self._GenMessageFromMetric(metric, timestamp)
+      if message:
+        sock.send(message + "\n")
+        logging.info(message)
+    sock.close()
+   
+
+# Store metrics into File 
+class BackendFile(Backend):
+
+  def __init__(self, path):
+    self.path = path
+
+  def Write(self, metrics):
+    with open(self.path, "w") as f:
+  
+      # Use the same timestamp for periodic metrics to align timeseries.
+      timestamp = time.mktime(time.gmtime())
+      for metric in metrics:
+        message = self._GenMessageFromMetric(metric, timestamp)
+        if message:
+          f.write(message + "\n")
+
+
+def main():
+  ips.tools.StartTool(TsdbAgent())
+
+
+if __name__ == '__main__':
+  main()

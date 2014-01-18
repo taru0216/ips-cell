@@ -964,6 +964,8 @@ class Sandbox(object):
                   ips.proto.sandbox_pb2.ARCHIVING):
            response.description = self._worker.task.progress
          return response
+    logging.warning('Unable to detect the current state: %s' % self.sandbox_id)     
+    return None
 
   _ALLOWED_EVENTS = {
     ips.proto.sandbox_pb2.NONE: 
@@ -1000,7 +1002,7 @@ class Sandbox(object):
     """
     state = self.GetState()
 
-    if not state.state in self.__class__._ALLOWED_EVENTS:
+    if state is None or not state.state in self.__class__._ALLOWED_EVENTS:
       return []
     return self.__class__._ALLOWED_EVENTS[state.state]
 

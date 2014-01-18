@@ -1,0 +1,37 @@
+author "Sungho Arai <sungho1031park@gmail.com>"
+description "Collects varz and stores it to TSDB"
+
+start on runlevel [2345]
+stop on runlevel [016]
+
+respawn
+
+pre-start script
+  test -x /usr/bin/ips-mon-scraped || { stop; exit 0; }
+end script
+
+script
+  PORT=4243
+  TSDB="localhost:4242"
+  INTERVAL="60"
+  test -f /etc/default/ips-mon-scraped && . /etc/default/ips-mon-scraped
+
+  if test "x$BACKEND" != "x"; then
+    EXTRA_OPTS="--backend=$BACKEND"
+  fi
+
+  exec /usr/bin/ips-mon-scraped \
+      --log_file_prefix=$LOG \
+      --targets="$TARGETS" \
+      --interval=$INTERVAL \
+      --varz_to_tsdb_rules="$VARZ_TO_TSDB_RULES" \
+      --metric_op_rules="$METRIC_OP_RULES" \
+      --dc="$DC" \
+      --env="$ENV" \
+      --enable_devz=false \
+      --port=$PORT \
+      --username=$USERNAME \
+      --password=$PASSWORD \
+      $EXTRA_OPTS \
+      $DAEMON_OPTS
+end script

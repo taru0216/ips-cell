@@ -265,15 +265,18 @@ class Manager:
     # target-blkio-requests
     columns = ['target']
     for sandbox_id in self.sandbox_service.GetSandboxes():
-      cmd = (
-          'cat /sys/fs/cgroup/blkio/lxc/%s/blkio.throttle.io_serviced |'
-          "    grep '^8:' |"
-          '    grep Total |'
-          "    cut -d' ' -f3 |"
-          "    awk '"
-          "        BEGIN {sum = 0;} {sum = sum + $1;} "
-          "        END {printf \"%%i\", sum;}'"
+      path = (
+          '/sys/fs/cgroup/blkio/lxc/%s/blkio.throttle.io_serviced'
           % sandbox_id)
+      cmd = (
+          'expr $('
+          '    cat %s |'
+          "    grep '^8:' |"
+          '    grep Total |'  
+          "    cut -d' ' -f3 |"
+          "    tr '\n' '+' |"
+          "    sed 's/+/ + /g') 0"
+          % path)
       try:
         blkio_io_serviced = ips.utils.CallExternalCommand(cmd).strip()
 
@@ -288,15 +291,18 @@ class Manager:
 
     # target-blkio-bytes
     for sandbox_id in self.sandbox_service.GetSandboxes():
+      path = (
+          '/sys/fs/cgroup/blkio/lxc/%s/blkio.throttle.io_service_bytes'
+          % sandbox_id)
       cmd = (
-          'cat /sys/fs/cgroup/blkio/lxc/%s/blkio.throttle.io_service_bytes |'
+          'expr $('
+          '    cat %s |'
           "    grep '^8:' |"
           '    grep Total |'
           "    cut -d' ' -f3 |"
-          "    awk '"
-          "        BEGIN {sum = 0;} {sum = sum + $1;} "
-          "        END {printf \"%%i\", sum;}'"
-          % sandbox_id)
+          "    tr '\n' '+' |"
+          "    sed 's/+/ + /g') 0"
+          % path)
       try:
         blkio_io_service_bytes = ips.utils.CallExternalCommand(cmd).strip()
 

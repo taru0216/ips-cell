@@ -1,3 +1,9 @@
+ips-cell (14.04.1396491150-2) precise; urgency=low
+
+  * Handles more than 2G values for target-blkio-bytes/requests.
+
+ -- Masato Taruishi <taru0216@gmail.com>  Thu, 03 Apr 2014 15:16:21 +0900
+
 ips-cell (14.04.1396491150-1) precise; urgency=low
 
   * Added target-blkio-bytes varz.

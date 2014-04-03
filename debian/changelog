@@ -1,3 +1,9 @@
+ips-cell (14.04.1396506315-1) precise; urgency=low
+
+  * Actually release the previsou version since it was a change in upstream.
+
+ -- Masato Taruishi <taru0216@gmail.com>  Thu, 03 Apr 2014 15:25:35 +0900
+
 ips-cell (14.04.1396491150-2) precise; urgency=low
 
   * Handles more than 2G values for target-blkio-bytes/requests.

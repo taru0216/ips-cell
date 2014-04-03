@@ -270,7 +270,9 @@ class Manager:
           "    grep '^8:' |"
           '    grep Total |'
           "    cut -d' ' -f3 |"
-          "    awk 'BEGIN { sum = 0; } { sum = sum + $1; } END {print sum;}'"
+          "    awk '"
+          "        BEGIN {sum = 0;} {sum = sum + $1;} "
+          "        END {printf \"%%i\", sum;}'"
           % sandbox_id)
       try:
         blkio_io_serviced = ips.utils.CallExternalCommand(cmd).strip()
@@ -291,7 +293,9 @@ class Manager:
           "    grep '^8:' |"
           '    grep Total |'
           "    cut -d' ' -f3 |"
-          "    awk 'BEGIN { sum = 0; } { sum = sum + $1; } END {print sum;}'"
+          "    awk '"
+          "        BEGIN {sum = 0;} {sum = sum + $1;} "
+          "        END {printf \"%%i\", sum;}'"
           % sandbox_id)
       try:
         blkio_io_service_bytes = ips.utils.CallExternalCommand(cmd).strip()

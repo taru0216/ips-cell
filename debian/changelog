@@ -1,3 +1,9 @@
+ips-cell (14.04.1396519914-1) precise; urgency=medium
+
+  * Fixed blkio counter 2G limit.
+
+ -- Masato Taruishi <taru0216@gmail.com>  Thu, 03 Apr 2014 19:12:11 +0900
+
 ips-cell (14.04.1396506315-1) precise; urgency=low
 
   * Actually release the previsou version since it was a change in upstream.

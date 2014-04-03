@@ -31,7 +31,7 @@ Description: Induced Pluripotent Stem Computing Cell - python libraries
 
 Package: ips-client
 Architecture: all
-Depends: ${shlibs:Depends}, ${misc:Depends}, ${python:Depends}, python-ips, python-tornado, python-protobuf
+Depends: ${shlibs:Depends}, ${misc:Depends}, ${python:Depends}, python-ips (= ${binary:Version}), python-tornado, python-protobuf
 Description: Induced Pluripotent Stem Computing Cell - clients
  iPS is a small operating system which hosts isolated
  systems on it. Each environment running the operating system
@@ -43,19 +43,19 @@ Description: Induced Pluripotent Stem Computing Cell - clients
 
 Package: ips-cell
 Architecture: all
-Depends: ${shlibs:Depends}, ${misc:Depends}, ${python:Depends}, python-ips, lxc, ajaxterm, lvm2, apparmor, bzip2, glusterfs-client, cgroup-lite
+Depends: ${shlibs:Depends}, ${misc:Depends}, ${python:Depends}, python-ips (= ${binary:Version}), lxc, ajaxterm, lvm2, apparmor, bzip2, glusterfs-client, cgroup-lite
 Description: Induced Pluripotent Stem Computing Cell - Cell
  This package contains necessary files for iPS cells.
 
 Package: ips-manager
 Architecture: all
-Depends: ${shlibs:Depends}, ${misc:Depends}, ${python:Depends}, radvd, python-ips 
+Depends: ${shlibs:Depends}, ${misc:Depends}, ${python:Depends}, radvd, python-ips (= ${binary:Version})
 Description: Induced Pluripotent Stem Computing Cell - Manager
  This package contains necessary files for iPS Manager.
 
 Package: varzd
 Architecture: all
-Depends: ${shlibs:Depends}, ${misc:Depends}, ${python:Depends}, python-ips
+Depends: ${shlibs:Depends}, ${misc:Depends}, ${python:Depends}, python-ips (= ${binary:Version})
 Description: Induced Pluripotent Stem Computing Cell - Simple monitoring daemon
  This package contains varzd daemon which collects system information in
  the same format used in iPS cell monitoring. By installing this daemon, you
@@ -64,7 +64,7 @@ Description: Induced Pluripotent Stem Computing Cell - Simple monitoring daemon
 
 Package: ips-mon-scraped
 Architecture: all
-Depends: ${shlibs:Depends}, ${misc:Depends}, ${python:Depends}, python-ips
+Depends: ${shlibs:Depends}, ${misc:Depends}, ${python:Depends}, python-ips (= ${binary:Version})
 Description: Induced Pluripotent Stem Computing Cell - iPS varz scraping daemon
  This package contains a daemon which scrapes varz endpoints exported by iPS
  servers, processes with mathmatical calculation and stores them to OpenTSDB.

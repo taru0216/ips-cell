@@ -284,6 +284,27 @@ class Manager:
       except (ValueError, ips.utils.CommandExitedWithError):
         pass
 
+    # target-blkio-bytes
+    for sandbox_id in self.sandbox_service.GetSandboxes():
+      cmd = (
+          'cat /sys/fs/cgroup/blkio/lxc/%s/blkio.throttle.io_service_bytes |'
+          "    grep '^8:' |"
+          '    grep Total |'
+          "    cut -d' ' -f3 |"
+          "    awk 'BEGIN { sum = 0; } { sum = sum + $1; } END {print sum;}'"
+          % sandbox_id)
+      try:
+        blkio_io_service_bytes = ips.utils.CallExternalCommand(cmd).strip()
+
+        values = [(sandbox_id, int(blkio_io_service_bytes))]
+        var = self.variables.CreateMapVariable(
+            'target-blkio-bytes',
+            columns, ips.proto.variables_pb2.Variable.Value.Map.COUNTER,
+            values)
+        self.variables[var.key] = var
+      except (ValueError, ips.utils.CommandExitedWithError):
+        pass
+
   def _Process(self):
     while True:
       if _Manager.Get():

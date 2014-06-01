@@ -68,7 +68,7 @@ class ExternalCommand():
     """Instantiates an external command object for the specified cmd."""
     logging.debug('executing %s', cmd)
     self.cmd = cmd
-    self.p = subprocess.Popen(cmd, shell=True,
+    self.p = subprocess.Popen(cmd, shell=True, close_fds=True,
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     self.out = ''
     self.retval = None

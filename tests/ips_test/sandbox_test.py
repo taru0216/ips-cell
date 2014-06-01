@@ -13,9 +13,9 @@ class FakeStub:
 
   Cmds = {
       'lxc-info -n example': 'example',
-      'lxc-shutdown -r -n example': '',
-      'lxc-shutdown -n example': '',
+      'lxc-stop -r -n example': '',
       'lxc-stop -n example': '',
+      'lxc-stop -k -n example': '',
       'lxc-start -d -n example': 'started',
       'lxc-destroy -n example': '',
       'grep lxc.network.link /var/lib/lxc/example/config | cut -d"=" -f2':
@@ -41,7 +41,7 @@ class FakeStub:
       '/sbin/iptables -I OUTPUT -t nat -p tcp -d 192.168.1.254' +
           ' --dport 3 -jDNAT --to-destination 192.168.1.1': '',
       'update-alternatives --remove ips-sandbox_. /var/lib/lxc/example': '',
-      'lxc-info -n example | grep state:': 'state: RUNNING',
+      'lxc-info -n example | grep -i state: || true': 'state: RUNNING',
   }
 
   File = {

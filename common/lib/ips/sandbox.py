@@ -598,7 +598,7 @@ class Sandbox(object):
     >>> s._Reboot()
     ''
     """
-    return self._stub.ExecCommand('lxc-shutdown -r -n %s' % self.sandbox_id)
+    return self._stub.ExecCommand('lxc-stop -r -n %s' % self.sandbox_id)
 
   def _Shutdown(self):
     """Shutdowns this sandbox.
@@ -607,7 +607,7 @@ class Sandbox(object):
     >>> s._Shutdown()
     ''
     """
-    out = self._stub.ExecCommand('lxc-shutdown -n %s' % self.sandbox_id)
+    out = self._stub.ExecCommand('lxc-stop -n %s' % self.sandbox_id)
     out += self._LameduckNetwork(reject_statusz=True)
     return out
 
@@ -618,7 +618,7 @@ class Sandbox(object):
     >>> s._Stop()
     ''
     """
-    out = self._stub.ExecCommand('lxc-stop -n %s' % self.sandbox_id)
+    out = self._stub.ExecCommand('lxc-stop -k -n %s' % self.sandbox_id)
     out += self._LameduckNetwork(reject_statusz=True)
     return out
 
@@ -629,8 +629,8 @@ class Sandbox(object):
     >>> s._Destroy()
     ''
     """
-    out = self._stub.ExecCommand('lxc-destroy -n %s' % self.sandbox_id)
-    out += self._UnregisterAlternative()
+    out = self._UnregisterAlternative()
+    out += self._stub.ExecCommand('lxc-destroy -n %s' % self.sandbox_id)
     return out
 
   def _UnregisterAlternative(self):
@@ -808,8 +808,8 @@ class Sandbox(object):
 
   def _IsLxcRunning(self):
     info = self._stub.ExecCommand(
-        'lxc-info -n %s | grep state:' % self.sandbox_id)
-    return info.split(':')[1].strip() == 'RUNNING'
+        'lxc-info -n %s | grep -i state: || true' % self.sandbox_id)
+    return len(info.split(':')) == 2 and info.split(':')[1].strip() == 'RUNNING'
 
   def IsReady(self):
     """Returns true if the sandbox is ready to server requests.
@@ -1140,9 +1140,10 @@ class _ProvisioningTask:
       extra_options += ' -B lvm --vgname "%s"' % options.sandbox_vgname
       if self.fssize:
         extra_options += ' --fssize "%s"' % self.fssize
-    cmd = 'lxc-create -n "%s" -t "%s" %s' % (self.sandbox.sandbox_id,
-                                             self.template_name,
-                                             extra_options)
+    cmd = 'nice ionice -c 3 '
+    cmd += 'lxc-create -n "%s" -t "%s" %s' % (self.sandbox.sandbox_id,
+                                              self.template_name,
+                                              extra_options)
     if self.template_options:
       cmd += ' -- %s' % self.template_options
     try:
@@ -1233,7 +1234,7 @@ class _ProvisioningTask:
         os.rename(tmp, umountfs)
 
     # remove original shared_dir
-    cmd = 'grep -v %s %s > %s.t && mv %s.t %s' % (options.shared_dir,
+    cmd = 'grep -v %s %s > %s.t && mv %s.t %s || true' % (options.shared_dir,
                                                   fstab,
                                                   fstab,
                                                   fstab,
@@ -1295,6 +1296,7 @@ class _ArchiveTask:
     with _ReadyRootfs(self.sandbox.sandbox_id):
       archive_path = self.sandbox._GetArchivePath()
       cmd = (
+          'nice ionice -c 3 '
           'tar --checkpoint=1000 -jcf %s.$$ -C /var/lib/lxc %s && '
           'mv %s.$$ %s' % (archive_path,
                            self.sandbox.sandbox_id, archive_path, archive_path))

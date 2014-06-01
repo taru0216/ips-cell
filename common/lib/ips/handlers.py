@@ -285,10 +285,10 @@ class FormzRpcClient:
     logging.debug('sending rpc with a request %s to %s', str(params), url)
     f = urllib.urlopen(url, params)
     try:
-      response_text = f.read()
       if f.getcode() != 200:
         raise google.protobuf.service.RpcException('RPC returned error: %d',
             f.getcode())
+      response_text = f.read()
       logging.debug('got rpc response %s from %s', response_text.strip(), url)
       response = ips.proto.GetService(service).GetResponseClass(method)()
       google.protobuf.text_format.Merge(response_text, response)

@@ -19,10 +19,8 @@ install_archive()
     archive=$3
 
     echo -n "Installing '$name' with $archive... "
-    /bin/cp $path/config $path/config.bak
     install -d $rootfs && tar --strip-components=1 \
         -jxf $archive -C $path --checkpoint=100
-    /bin/mv $path/config.bak $path/config
     echo "done"
 
     return 0
@@ -30,7 +28,13 @@ install_archive()
 
 configure_archive()
 {
-    rootfs=$1
+    path=$1
+    rootfs=$2
+
+    if test -x "$path/postinst"; then
+      ROOTFS="$rootfs" $path/postinst
+    fi
+
     return 0
 }
 
@@ -40,70 +44,23 @@ copy_configuration()
     rootfs=$2
     name=$3
 
-    ttydir=""
-    if [ -f $rootfs/etc/init/container-detect.conf ]; then
-        ttydir=" lxc"
+    if [ "$arch" = "i386" ]; then
+        arch="i686"
     fi
 
     # if there is exactly one veth network entry, make sure it has an
     # associated hwaddr.
     nics=`grep -e '^lxc\.network\.type[ \t]*=[ \t]*veth' $path/config | wc -l`
     if [ $nics -eq 1 ]; then
-        grep -q "^lxc.network.hwaddr" $path/config || cat <<EOF >> $path/config
-lxc.network.hwaddr = 00:16:3e:$(openssl rand -hex 3| sed 's/\(..\)/\1:/g; s/.$//')
-EOF
+        grep -q "^lxc.network.hwaddr" $path/config || sed -i -e "/^lxc\.network\.type[ \t]*=[ \t]*veth/a lxc.network.hwaddr = 00:16:3e:$(openssl rand -hex 3| sed 's/\(..\)/\1:/g; s/.$//')" $path/config
     fi
 
-    grep -q "^lxc.rootfs" $path/config 2>/dev/null || echo "lxc.rootfs = $rootfs" >> $path/config
-    cat <<EOF >> $path/config
-lxc.utsname = $name
+    sed -i -e "s:^lxc.rootfs.*:lxc.rootfs = $rootfs:" $path/config
+    sed -i -e "s:^lxc.mount.*:lxc.mount = $path/fstab:" $path/config
+    sed -i -e "s:^lxc.ustname.*:lxc.utsname = $name:" $path/config
 
-lxc.devttydir =$ttydir
-lxc.tty = 4
-lxc.pts = 1024
-lxc.mount  = $path/fstab
-lxc.arch = amd64
-lxc.cap.drop = sys_module mac_admin mac_override
-lxc.pivotdir = lxc_putold
-
-# uncomment the next line to run the container unconfined:
-#lxc.aa_profile = unconfined
-
-EOF
     if [ -f $path/devices ]; then
         cat $path/devices >> $path/config
-    else
-        cat <<EOF >> $path/config
-lxc.cgroup.devices.deny = a
-# Allow any mknod (but not using the node)
-lxc.cgroup.devices.allow = c *:* m
-lxc.cgroup.devices.allow = b *:* m
-# /dev/null and zero
-lxc.cgroup.devices.allow = c 1:3 rwm
-lxc.cgroup.devices.allow = c 1:5 rwm
-# consoles
-lxc.cgroup.devices.allow = c 5:1 rwm
-lxc.cgroup.devices.allow = c 5:0 rwm
-#lxc.cgroup.devices.allow = c 4:0 rwm
-#lxc.cgroup.devices.allow = c 4:1 rwm
-# /dev/{,u}random
-lxc.cgroup.devices.allow = c 1:9 rwm
-lxc.cgroup.devices.allow = c 1:8 rwm
-lxc.cgroup.devices.allow = c 136:* rwm
-lxc.cgroup.devices.allow = c 5:2 rwm
-# rtc
-lxc.cgroup.devices.allow = c 254:0 rwm
-#fuse
-lxc.cgroup.devices.allow = c 10:229 rwm
-#tun
-lxc.cgroup.devices.allow = c 10:200 rwm
-#full
-lxc.cgroup.devices.allow = c 1:7 rwm
-#hpet
-lxc.cgroup.devices.allow = c 10:228 rwm
-#kvm
-lxc.cgroup.devices.allow = c 10:232 rwm
-EOF
     fi
     if [ $? -ne 0 ]; then
         echo "Failed to add configuration"
@@ -121,7 +78,7 @@ EOF
     return 0
 }
 
-options=$(getopt -o ha:p:n: -l help,archive:,path:,name: -- "$@")
+options=$(getopt -o ha:p:n:e: -l help,archive:,path:,name:,rootfs: -- "$@")
 if [ $? -ne 0 ]; then
         usage $(basename $0)
     exit 1
@@ -132,9 +89,11 @@ while true
 do
     case "$1" in
         -h|--help)      usage $0 && exit 0;;
+        --rootfs)       rootfs=$2; shift 2;;
         -p|--path)      path=$2; shift 2;;
     	-n|--name)      name=$2; shift 2;;
     	-a|--archive)   archive=$2; shift 2;;
+        -e)             export $2; shift 2;;
         --)             shift 1; break ;;
         *)              break ;;
     esac
@@ -160,12 +119,19 @@ if [ -z "$path" ]; then
     exit 1
 fi
 
+if [ -z "$name" ]; then
+    echo "'name' parameter is required"
+    exit 1
+fi
+
 # detect rootfs
 config="$path/config"
-if grep -q '^lxc.rootfs' $config 2>/dev/null ; then
+if [ -z "$rootfs" ]; then
+  if grep -q '^lxc.rootfs' $config 2>/dev/null ; then
     rootfs=`grep 'lxc.rootfs =' $config | awk -F= '{ print $2 }'`
-else
+  else
     rootfs=$path/rootfs
+  fi
 fi
 
 install_archive $path $name "$archive"
@@ -174,7 +140,7 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-configure_archive $rootfs
+configure_archive $path $rootfs
 if [ $? -ne 0 ]; then
     echo "failed to configure archive template"
     exit 1

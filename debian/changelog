@@ -1,3 +1,9 @@
+ips-cell (14.06.1401596949-1) trusty; urgency=medium
+
+  * Ported for ubuntu trusty.
+
+ -- Masato Taruishi <taru0216@gmail.com>  Sun, 01 Jun 2014 13:31:52 +0900
+
 ips-cell (14.04.1396519914-1) precise; urgency=medium
 
   * Fixed blkio counter 2G limit.

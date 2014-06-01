@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/python
 
 __author__ = 'Masato Taruishi'
 __copyright__ = 'Copyright (c) 2013, Masato Taruishi <taru0216@gmail.com>'
@@ -72,6 +72,12 @@ define(
     default=None)
 
 define(
+    'sandbox_id',
+    help='Id of this sandbox.',
+    metavar='ID',
+    default=None)
+
+define(
     'num_updates',
     help='Number of cells you want to update at the same time.',
     metavar='NUMBER',
@@ -119,34 +125,60 @@ class UpdateTask(threading.Thread):
   def _NormalizeId(self, buf):
     return buf.replace('.', '-')
 
+  def _GetCurrentSandboxId(self):
+    return self.GetAlternatives().current_sandbox_id
+
+  def _GetSandbox(self, sandbox_id):
+    alternatives = self.GetAlternatives()
+    for alternative in alternatives.alternatives:
+      if alternative.sandbox.sandbox_id == sandbox_id:
+        return alternative.sandbox
+    return None
+
+  def _ExistsSandboxForVersion(self, version):
+    alternatives = self.GetAlternatives()
+    for alternative in alternatives.alternatives:
+      if alternative.sandbox.version == version:
+        return True
+    return False
+
+  def _GetLatestVersion(self):
+    alternatives = self.GetAlternatives()
+    version=options.version
+    for alternative in alternatives.alternatives:
+      if alternative.sandbox.version > version:
+        version = alternative.sandbox.version
+    return version
+
   def _InitSandboxId(self):
     self.sandbox_id = None
     self.new_sandbox = False
-    if not options.version:
-       # make auto mode if no version specified
-       self.SetAlternative()
-       self.sandbox_id = self.GetAlternatives().current_sandbox_id
-    else:
-      # If you don't specify --new_release option, then this would
-      # search existing sandboxes with the specified version.
-      if options.new_release.lower() != 'true':
-        alternatives = self.GetAlternatives()
-        for alternative in alternatives.alternatives:
-          if alternative.sandbox.version == options.version:
-            self.sandbox_id = alternative.sandbox.sandbox_id
-            # Set manual mode and the found sandbox as default.
-            self.SetAlternative(self.sandbox_id)
 
-      # if there's no version in the cell, make auto mode and creates
-      # a new sandbox.
-      if not self.sandbox_id:
+    if options.sandbox_id:
+
+      self.sandbox_id = options.sandbox_id
+      if self._GetSandbox(options.sandbox_id) is not None:
+        if options.new_release.lower() == 'true':
+          raise Error('Sandbox already exists: %s' % options.sandbox_id)
+        self.SetAlternative(self.sandbox_id)
+
+    else:
+
+      version = options.version or self._GetLatestVersion()
+
+      if (options.new_release.lower() == 'true' or
+          not self._ExistsSandboxForVersion(version)):
+
         self.SetAlternative()
         self.new_sandbox = True
         self.sandbox_id ='%s.%s.%s.%s@%s' % (
-            hex(int(time.time()))[2:], self._NormalizeId(options.version),
+            hex(int(time.time()))[2:],
+            self._NormalizeId(version),
             self._NormalizeId(options.role),
             self._NormalizeId(options.owner),
             self._NormalizeId(self.cell.node.split(':')[0]))
+      else:
+         self.sandbox_id = self._GetCurrentSandboxId()
 
     if not self.sandbox_id:
       raise Exception('No sandbox id recognized')
@@ -316,6 +348,12 @@ class UpdateManager(threading.Thread):
       self.tasks.append(UpdateTask(cell, self))
 
   def run(self):
+    try:
+      self._Run()
+    finally:
+      ips.tools.StopTool()
+
+  def _Run(self):
     self.start_at = '%s %s' % (time.ctime(time.time()), time.tzname[1])
     for task in self.tasks:
       task.start()
@@ -327,7 +365,6 @@ class UpdateManager(threading.Thread):
         'update task finished. waiting %d seconds to stop the server',
         wait_time)
     time.sleep(wait_time)
-    ips.tools.StopTool()
  
 
 class StatuszHandler(tornado.web.RequestHandler):

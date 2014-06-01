@@ -8,6 +8,7 @@ Standards-Version: 3.9.3
 Package: ips-common
 Architecture: all
 Depends: ${shlibs:Depends}, ${misc:Depends}
+Conflicts: lxc (< 1.0.3-0ubuntu3)
 Description: Induced Pluripotent Stem Computing Cell - common files
  iPS is a small operating system which hosts isolated
  systems on it. Each environment running the operating system
@@ -43,7 +44,7 @@ Description: Induced Pluripotent Stem Computing Cell - clients
 
 Package: ips-cell
 Architecture: all
-Depends: ${shlibs:Depends}, ${misc:Depends}, ${python:Depends}, python-ips (= ${binary:Version}), lxc, ajaxterm, lvm2, apparmor, bzip2, glusterfs-client, cgroup-lite
+Depends: ${shlibs:Depends}, ${misc:Depends}, ${python:Depends}, python-ips (= ${binary:Version}), lxc (>= 1.0.3-0ubuntu3), ajaxterm, lvm2, apparmor, bzip2, glusterfs-client, cgroup-lite
 Description: Induced Pluripotent Stem Computing Cell - Cell
  This package contains necessary files for iPS cells.
 
